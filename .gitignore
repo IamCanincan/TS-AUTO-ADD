@@ -1,0 +1,4 @@
+.ts_tmp
+.ts_pending
+.ts_daemon.pid
+.ts_lock/
