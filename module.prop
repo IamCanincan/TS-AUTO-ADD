@@ -1,0 +1,7 @@
+id=ts-auto-add
+name=TS-AUTO-ADD
+version=1.4.31.5-yuzu
+versionCode=Ciallo
+author=Can
+description=开机后台监听 /data/system/packages.list，实时自动更新 Tricky Store 的 target.txt；确保 Play 商店、GMS、GSF 常驻；inotify 驱动无轮询，低功耗。
+minKsuVersion=10000
