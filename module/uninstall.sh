@@ -19,4 +19,9 @@ rm -f /data/adb/tricky_store/.ts_tmp
 # 注意：不要删除 target.txt，它是 Tricky Store 主模块的核心配置，
 # 只清理本模块产生的辅助文件。
 
+# 清理写入 service.d 的 resetprop 脚本
+if [ -f "/data/adb/service.d/taa_resetprop.sh" ]; then
+    rm -f /data/adb/service.d/taa_resetprop.sh
+fi
+
 exit 0
