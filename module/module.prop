@@ -1,8 +1,8 @@
 id=ts-auto-add
 name=TS-AUTO-ADD
-version=v1.5.42.6-yuzu
-versionCode=20260705
+version=v1.6.53.7-yuzu
+versionCode=20260706
 author=IamCanincan
-description=开机后台监听 /data/system/packages.list，实时自动更新 Tricky Store 的 target.txt；确保 Play 商店、GMS、GSF 常驻；inotify 驱动无轮询，低功耗；仅提供最基础的prop隐藏。
+description=监听 /data/system/packages.list 并自动同步第三方应用包名至 Tricky Store 的 target.txt，默认包含 Google 核心服务。定期更新 /data/adb/tricky_store/security_patch.txt 的补丁日期，并执行指定的系统属性修改。
 updateJson=https://raw.githubusercontent.com/IamCanincan/TS-AUTO-ADD/main/update.json
 minKsuVersion=10000

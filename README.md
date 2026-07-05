@@ -1,33 +1,48 @@
-# TS-AUTO-ADD
+# TS-AUTO-ADD (v1.6.53.7-yuzu)
 
-自动维护 Tricky Store / TEE Simulator 的 target.txt，无需手动编辑。内置系统安全属性状态重置脚本。
+TS-AUTO-ADD 是一个基于 `inotifyd` 的后台守护程序，用于自动化维护 Tricky Store / TEE Simulator 的 `target.txt` 列表，并执行安全补丁日期自动追新与系统属性重置。
 
-## 功能
-- **实时同步**：开机自启，基于 `inotify` 异步驱动后台监听应用安装/卸载/更新，低功耗、零轮询。
-- **动态控制**：
-  - 自定义常驻系统应用（`fakesys.txt`），修改后立即生效。
-  - 自定义排除第三方应用（`trueusr.txt`），修改后立即生效。
-- **防抖机制**：在短时间内触发大批量包名变动时，自动开启防抖，避免高频 I/O。
-- **系统状态隐藏 (v1.5.42.6+)**：自动向 `/data/adb/service.d` 部署 `taa_resetprop.sh` 脚本并赋权 `755`。开机自动伪装 `locked`、`green`、`release-keys` 等关键 Boot 状态，深度清理调试指纹与解锁痕迹。
-- **全面兼容**：完美支持 Magisk 与 KernelSU。
+## 核心功能
 
-## 安装
-1. 确保已安装并启用 Tricky Store 或 TEE Simulator。
-2. 将最新版 `TS-AUTO-ADD-v1.5.42.6-yuzu.zip` 下载并刷入。
-3. 重启手机。
+* **配置自动化**：通过 `inotifyd` 监控 `/data/system/packages.list`，依据应用变更实时更新 `target.txt`。
+* **状态看板管理**：模块 `description` 由后台进程托管，实时显示 [应用数 | 安全补丁日期 | 更新时间]。
+* **补丁日期追新**：内置网络拉取机制，定期比对 Google 安全公告，将系统补丁日期校准至当月 05 日。
+* **属性重置**：开机阶段自动执行 `taa_resetprop.sh`，覆盖并锁定关键 Boot 状态与调试属性。
+* **环境兼容**：支持 Magisk、KernelSU 及 APatch 运行环境。
 
-## 自定义配置
-模块在 `/data/adb/tricky_store/` 目录下提供以下配置能力：
-- `fakesys.txt`：常驻系统应用，每行一个包名。默认包含 Play 商店、GMS、GSF。
-- `trueusr.txt`：需排除的第三方应用，每行一个包名。默认为空。
+## 安装与部署
 
-*提示：编辑并保存上述文件后，`target.txt` 将在数秒内自动感知并完成更新。*
+1. 确认 Tricky Store 或 TEE Simulator 已正常启用。
+2. 在 Magisk/KernelSU 中安装本模块压缩包。
+3. 重启设备以启动后台守护进程。
 
-## 核心重置属性清单
-内置的 `taa_resetprop.sh` 脚本在开机时会自动覆盖并锁定以下核心属性：
-- `ro.boot.vbmeta.device_state` -> `locked`
-- `ro.boot.verifiedbootstate` -> `green`
-- `ro.boot.flash.locked` -> `1`
-- `ro.build.tags` -> `release-keys`
-- `ro.debuggable` / `ro.force.debuggable` -> `0`
-- 自动隐藏 Magisk 恢复模式引发的 `recovery` 启动模式。
+## 运行状态查询
+
+安装后，模块详情页的简介将实时更新运行参数：
+`[应用数: X | 补丁: YYYY-MM-05 | 更新: HH:MM]`
+
+若需即时执行同步并刷新状态，在终端运行：
+
+```bash
+sh /data/adb/modules/ts-auto-add/action.sh
+
+```
+
+## 数据配置路径
+
+所有运行时文件存储于 `/data/adb/tricky_store/`：
+
+* `target.txt`：当前自动同步的应用包名列表。
+* `security_patch.txt`：系统安全补丁日期配置文件。
+
+## 属性重置覆盖清单
+
+开机脚本强制执行以下属性校准：
+
+* **安全状态**：`ro.boot.vbmeta.device_state` (locked), `ro.boot.verifiedbootstate` (green)。
+* **调试状态**：`ro.debuggable` (0), `ro.build.tags` (release-keys), `ro.build.type` (user)。
+* **痕迹隐藏**：移除 `recovery` 启动模式痕迹，修正各厂商预设的引导状态属性。
+
+## 更新记录
+
+详细变更请参阅模块根目录下的 `CHANGELOG.md`。
