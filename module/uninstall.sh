@@ -1,17 +1,27 @@
 #!/system/bin/sh
 
-# 终止可能正在运行的守护进程
+# 终止可能正在运行的守护进程（主监控进程）
 PID_FILE="/data/adb/tricky_store/.ts_daemon.pid"
 if [ -f "$PID_FILE" ]; then
     pid=$(cat "$PID_FILE")
     kill "$pid" 2>/dev/null
     sleep 0.3
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    rm -f "$PID_FILE"
 fi
 
-# 清理所有运行时产生的临时文件
+# 终止补丁更新进程（独立的后台循环）
+PATCH_PID_FILE="/data/adb/tricky_store/.ts_patch.pid"
+if [ -f "$PATCH_PID_FILE" ]; then
+    pid=$(cat "$PATCH_PID_FILE")
+    kill "$pid" 2>/dev/null
+    sleep 0.3
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    rm -f "$PATCH_PID_FILE"
+fi
+
+# 清理所有运行时产生的临时文件及锁
 rm -rf /data/adb/tricky_store/.ts_lock
-rm -f /data/adb/tricky_store/.ts_daemon.pid
 rm -f /data/adb/tricky_store/.ts_pending
 rm -f /data/adb/tricky_store/.ts_tmp
 

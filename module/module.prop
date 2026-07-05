@@ -1,7 +1,7 @@
 id=ts-auto-add
 name=TS-AUTO-ADD
-version=v1.6.53.7-yuzu
-versionCode=20260706
+version=v1.7.64.8-yuzu
+versionCode=20260707
 author=IamCanincan
 description=监听 /data/system/packages.list 并自动同步第三方应用包名至 Tricky Store 的 target.txt，默认包含 Google 核心服务。定期更新 /data/adb/tricky_store/security_patch.txt 的补丁日期，并执行指定的系统属性修改。
 updateJson=https://raw.githubusercontent.com/IamCanincan/TS-AUTO-ADD/main/update.json

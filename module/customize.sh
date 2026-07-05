@@ -3,7 +3,8 @@ SKIPUNZIP=0
 
 #====================================================
 # TS-AUTO-ADD 模块安装脚本
-# 功能：安装前检查、首次同步、权限设置
+# 功能：检查依赖、设置权限、清理残留、执行首次同步、
+#       部署辅助脚本（taa_resetprop.sh）。
 #====================================================
 
 ui_print "================================================"
@@ -58,22 +59,26 @@ ui_print "[3/5] 准备运行环境..."
 mkdir -p /data/adb/tricky_store
 ui_print "  ✓ 工作目录 /data/adb/tricky_store 已就绪"
 
+# 清理可能遗留的锁文件、PID 文件及临时文件
 rm -rf /data/adb/tricky_store/.ts_lock /data/adb/tricky_store/.ts_pending
-rm -f /data/adb/tricky_store/.ts_daemon.pid /data/adb/tricky_store/.ts_tmp
+rm -f /data/adb/tricky_store/.ts_daemon.pid /data/adb/tricky_store/.ts_patch.pid
+rm -f /data/adb/tricky_store/.ts_tmp
 ui_print "  ✓ 已清理残留临时文件"
 
-# ---- 4. 部署 resetprop 脚本 ----
+# ---- 4. 部署 taa_resetprop.sh 到 service.d ----
 ui_print " "
 ui_print "[4/5] 部署 taa_resetprop.sh 脚本..."
 
 mkdir -p /data/adb/service.d
 
-cp -f "$MODPATH/taa_resetprop.sh" "/data/adb/service.d/taa_resetprop.sh"
-chmod 0755 "/data/adb/service.d/taa_resetprop.sh"
-
-ui_print "  ✓ 已将 taa_resetprop.sh 写入 /data/adb/service.d 并赋予 0755 权限"
-
-rm -f "$MODPATH/taa_resetprop.sh"
+if [ -f "$MODPATH/taa_resetprop.sh" ]; then
+    cp -f "$MODPATH/taa_resetprop.sh" "/data/adb/service.d/taa_resetprop.sh"
+    chmod 0755 "/data/adb/service.d/taa_resetprop.sh"
+    ui_print "  ✓ 已将 taa_resetprop.sh 写入 /data/adb/service.d 并赋予 0755 权限"
+    rm -f "$MODPATH/taa_resetprop.sh"
+else
+    ui_print "  ⚠ 未找到 taa_resetprop.sh，跳过部署"
+fi
 
 # ---- 5. 首次全量同步 ----
 ui_print " "
