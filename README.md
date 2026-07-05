@@ -1,4 +1,7 @@
-## TS-AUTO-ADD (v1.7.64.8-yuzu)
+根据最新版本 v1.8.75.9-yuzu 的变更，已更新 README 内容如下：
+
+```markdown
+## TS-AUTO-ADD (v1.8.75.9-yuzu)
 
 TS-AUTO-ADD 是一个基于 `inotifyd` 的后台守护程序，用于自动化维护 Tricky Store / TEE Simulator 的 `target.txt` 列表，并执行安全补丁日期自动追新与系统属性重置。
 
@@ -56,6 +59,11 @@ sh /data/adb/modules/ts-auto-add/action.sh --force
 
 ---
 
+### v1.8.75.9-yuzu 主要更新
+
+* **安全补丁配置统一**：`security_patch.txt` 中 `system` 字段改为动态日期，与 `boot`/`vendor` 保持一致，消除配置差异。
+* **应用列表健壮性**：生成 `target.txt` 时自动过滤空行，防止无第三方应用时出现空白条目，确保统计准确。
+
 ### v1.7.64.8-yuzu 主要更新
 
 * **进程管理完善**：增加补丁更新进程 PID 文件（`.ts_patch.pid`），解决升级后进程残留问题。
@@ -64,3 +72,4 @@ sh /data/adb/modules/ts-auto-add/action.sh --force
 * **锁机制优化**：增加超时（30 秒）并强制清理残留锁，避免死锁。
 * **网络请求增强**：为 curl / wget 添加 `User-Agent` 头，提高访问成功率。
 * **安装与卸载完善**：同步清理新增的 PID 文件和进程，确保无残留。
+```

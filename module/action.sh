@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # 模块手动管理脚本: action.sh
-# 用途: 在终端中手动触发一次完整的应用列表与安全补丁同步，
-#       并更新 module.prop 中的状态描述，便于调试与验证。
+# 用途: 在终端中手动触发应用列表与安全补丁的同步，
+#       更新 module.prop 中的状态描述。
 
 MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
@@ -13,8 +13,8 @@ TMP="$BASE/.ts_tmp"
 
 # ---------- 工具函数 ----------
 
-# 尝试创建目录作为互斥锁，避免与后台守护进程或其他实例并发执行。
-# 若 10 秒内无法获取锁，则输出错误并返回非零值。
+# 创建目录互斥锁，防止并发执行。
+# 若 10 秒内无法获取锁，输出错误并返回非零值。
 acquire_lock() {
     local timeout=10
     while [ $timeout -gt 0 ]; do
@@ -28,15 +28,15 @@ acquire_lock() {
     return 1
 }
 
-# 移除锁目录，释放锁。
+# 移除锁目录。
 release_lock() { rmdir "$LOCK_DIR" 2>/dev/null; }
 
-# 从字符串中提取 YYYY-MM-DD 格式的日期（仅限 2020 年及以后）。
+# 提取 YYYY-MM-DD 格式的日期（年份 2020 及以后）。
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
 
-# 若日期为某月 01 日，则强制改为 05 日（因 Google 安全公告通常以 05 日发布）。
+# 若日期为 *-01，则替换为 *-05，以匹配安全公告发布日期。
 # 其他日期保持不变。
 force_to_05() {
     local in_date="$1"
@@ -48,13 +48,14 @@ force_to_05() {
     fi
 }
 
-# 获取系统属性中的安全补丁日期，并标准化为 05 日。
+# 获取系统安全补丁日期并标准化为 05 日。
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }
 
-# 从给定的 URL 获取 HTML 页面，提取第一个匹配的安全补丁日期（优先从包含关键词的段落中提取）。
-# 若无法获取或解析失败，返回空值。
+# 从给定 URL 获取 HTML，提取安全补丁日期。
+# 优先匹配包含关键词的段落，否则返回首个符合格式的日期。
+# 返回空值表示获取或解析失败。
 fetch_online_date() {
     local url="$1"
     local html=""
@@ -83,7 +84,8 @@ fetch_online_date() {
     force_to_05 "$raw_date_backup"
 }
 
-# 比较两个日期，返回较新的日期（若任一为空，则返回另一个）。
+# 比较两个日期，返回较新的日期。
+# 若任一为空，则返回另一个。
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
@@ -93,7 +95,8 @@ pick_newer() {
     [ "$n1" -ge "$n2" ] && echo "$d1" || echo "$d2"
 }
 
-# 更新 module.prop 中的 description 字段，显示当前应用列表条目数、安全补丁日期及最后更新时间。
+# 更新 module.prop 的 description 字段。
+# 内容包含当前应用数、安全补丁日期及最后更新时间。
 update_module_status() {
     [ -f "$PROP_FILE" ] || return 0
     local app_count=0
@@ -124,7 +127,7 @@ case "$1" in
         ;;
     --help|-h)
         echo "用法: $0 [--force]"
-        echo "  --force  强制清除本地月份缓存，重新在线获取安全补丁日期"
+        echo "  --force  强制清除月份缓存，重新在线获取安全补丁日期"
         exit 0
         ;;
 esac
@@ -141,7 +144,6 @@ if [ $FORCE_MODE -eq 1 ]; then
 fi
 echo "===================================================="
 
-# 获取执行锁，若失败则退出。
 acquire_lock || exit 1
 
 echo ""
@@ -154,7 +156,7 @@ APPS_3_COUNT=$(echo "$APPS_3" | wc -l)
 {
     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n"
     echo "$APPS_3"
-} | sort -u > "$TMP"
+} | sort -u | sed '/^$/d' > "$TMP"
 
 if [ -s "$TMP" ]; then
     if ! cmp -s "$TMP" "$BASE/target.txt"; then
@@ -186,7 +188,6 @@ echo "  系统补丁日期: $SYSTEM_DATE"
 SYS_YM="${SYSTEM_DATE%-*}"
 NEED_ONLINE=0
 
-# 根据缓存文件和强制模式决定是否发起在线请求
 if [ -f "$PATCH_CACHE_FILE" ] && [ $FORCE_MODE -eq 0 ]; then
     CACHED_MONTH=$(cat "$PATCH_CACHE_FILE")
     if [ "$CACHED_MONTH" != "$SYS_YM" ]; then
@@ -228,12 +229,11 @@ else
     echo "  使用系统日期（未触发在线获取）"
 fi
 
-# 写入 security_patch.txt，同时备份原有文件
 if [ -f "$PATCH_CONFIG_FILE" ]; then
     cp -f "$PATCH_CONFIG_FILE" "$PATCH_CONFIG_FILE.bak"
 fi
 cat << EOF > "$PATCH_CONFIG_FILE"
-system=prop
+system=$FINAL_DATE
 boot=$FINAL_DATE
 vendor=$FINAL_DATE
 EOF
@@ -248,7 +248,6 @@ done < "$PATCH_CONFIG_FILE"
 echo "        +----------------------------------------+"
 echo " [状态] 阶段 2 完成"
 
-# 更新 module.prop 描述
 update_module_status
 echo "  已更新 module.prop 描述信息"
 

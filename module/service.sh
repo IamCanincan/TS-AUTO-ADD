@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # 模块后台服务脚本: service.sh
-# 功能: 开机自启动，维持 target.txt 与 security_patch.txt 的自动同步。
+# 功能: 开机启动，维持 target.txt 与 security_patch.txt 的自动同步。
 #       包含应用列表更新、安全补丁定期刷新及 packages.list 变更监听。
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -20,8 +20,8 @@ PATCH_CACHE_FILE="$BASE/.last_month"
 
 # ---------- 工具函数 ----------
 
-# 尝试创建目录锁，超时 30 秒后强制删除残留锁并重建。
-# 返回值: 0 成功，1 失败。
+# 创建目录互斥锁，防止并发执行。
+# 超时 30 秒后尝试强制清理残留锁并重建。
 acquire_lock() {
     local timeout=30
     while [ $timeout -gt 0 ]; do
@@ -39,7 +39,8 @@ acquire_lock() {
 # 移除锁目录。
 release_lock() { rmdir "$LOCK_DIR" 2>/dev/null; }
 
-# 更新 module.prop 的 description 字段，显示应用数、补丁日期和最后更新时间。
+# 更新 module.prop 的 description 字段。
+# 显示应用数、补丁日期及最后更新时间。
 update_module_status() {
     [ -f "$PROP_FILE" ] || return 0
     local app_count=0
@@ -62,13 +63,14 @@ update_module_status() {
     chmod 644 "$PROP_FILE" 2>/dev/null
 }
 
-# 执行应用列表同步：收集内置三个 Google 包及所有第三方包，去重后写入 target.txt。
+# 执行应用列表同步：收集三个 Google 包及所有第三方包，去重后写入 target.txt。
+# 使用 sed '/^$/d' 过滤可能出现的空行。
 do_sync() {
     mkdir -p "$BASE"
     {
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n"
         pm list packages -3 2>/dev/null | sed -n 's/^package://p'
-    } | sort -u > "$TMP"
+    } | sort -u | sed '/^$/d' > "$TMP"
     if [ -s "$TMP" ]; then
         if ! cmp -s "$TMP" "$TARGET"; then
             mv -f "$TMP" "$TARGET"
@@ -96,17 +98,18 @@ dispatch_sync() {
     release_lock
 }
 
-# 从字符串中提取 YYYY-MM-DD 格式日期（2020 年及以后）。
+# 提取 YYYY-MM-DD 格式的日期（年份 2020 及以后）。
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
 
-# 获取系统属性中的安全补丁日期，并强制转为 05 日（Google 公告惯例）。
+# 获取系统安全补丁日期并标准化为 05 日。
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }
 
-# 若日期为 *-01 则改为 *-05，否则原样返回。
+# 若日期为 *-01，则替换为 *-05，以匹配安全公告发布日期。
+# 其他日期保持不变。
 force_to_05() {
     local in_date="$1"
     if [ -n "$in_date" ]; then
@@ -117,8 +120,9 @@ force_to_05() {
     fi
 }
 
-# 从给定 URL 获取安全补丁日期，优先从包含关键词的段落提取，否则取第一个匹配。
-# 返回空值表示失败。
+# 从给定 URL 获取 HTML，提取安全补丁日期。
+# 优先匹配包含关键词的段落，否则返回首个符合格式的日期。
+# 返回空值表示获取或解析失败。
 fetch_online_date() {
     local url="$1"
     local html=""
@@ -144,7 +148,8 @@ fetch_online_date() {
     force_to_05 "$raw_date_backup"
 }
 
-# 比较两个日期，返回较新的一个；若任一为空则返回另一个。
+# 比较两个日期，返回较新的日期。
+# 若任一为空，则返回另一个。
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
@@ -154,8 +159,8 @@ pick_newer() {
     [ "$n1" -ge "$n2" ] && echo "$d1" || echo "$d2"
 }
 
-# 更新 security_patch.txt：根据系统日期和在线日期（若需要）取较新者写入。
-# 使用 .last_month 缓存避免频繁请求。
+# 更新 security_patch.txt：取系统日期与在线获取日期的较新值写入。
+# 使用 .last_month 缓存月份，避免重复请求。
 update_security_patch() {
     mkdir -p "$BASE"
     local SYSTEM_DATE=$(get_system_date)
@@ -193,7 +198,7 @@ update_security_patch() {
 
     [ -f "$PATCH_CONFIG_FILE" ] && cp -f "$PATCH_CONFIG_FILE" "$PATCH_BACKUP_FILE"
     cat << EOF > "$PATCH_CONFIG_FILE"
-system=prop
+system=$FINAL_DATE
 boot=$FINAL_DATE
 vendor=$FINAL_DATE
 EOF
@@ -219,7 +224,6 @@ case "$1" in
 esac
 
 # ---------- 清理旧进程 ----------
-# 清理监控进程（PID 记录在 PID_FILE）
 if [ -f "$PID_FILE" ]; then
     old_pid="$(cat "$PID_FILE")"
     kill "$old_pid" 2>/dev/null
@@ -227,7 +231,6 @@ if [ -f "$PID_FILE" ]; then
     kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null
     rm -f "$PID_FILE"
 fi
-# 清理补丁更新进程（PID 记录在 PATCH_PID_FILE）
 if [ -f "$PATCH_PID_FILE" ]; then
     old_patch_pid="$(cat "$PATCH_PID_FILE")"
     kill "$old_patch_pid" 2>/dev/null
@@ -244,7 +247,7 @@ until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 1
 done
 
-# 首次执行同步
+# 首次同步
 do_sync
 
 # ---------- 启动后台子进程 ----------
@@ -263,7 +266,6 @@ echo $! > "$PATCH_PID_FILE"
     trap 'release_lock; rm -f "$PENDING"; exit' EXIT INT TERM
     while true; do
         while [ ! -f "$WATCH_FILE" ]; do sleep 2; done
-        # inotifyd 触发时执行本脚本的 --sync 分支，仅同步一次
         inotifyd "$0" "$WATCH_FILE:w" >/dev/null 2>&1
         dispatch_sync
         sleep 1
