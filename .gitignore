@@ -1,4 +1,111 @@
-.ts_tmp
-.ts_pending
-.ts_daemon.pid
-.ts_lock/
+# ============================================================
+# TS-AUTO-ADD .gitignore
+# 适用于 Magisk / KernelSU 模块开发
+# ============================================================
+
+# ---------------------- 构建产物 ----------------------
+*.zip
+*.zip.md5
+*.jar
+*.aar
+*.class
+*.dex
+*.apk
+*.tgz
+*.tar.gz
+*.7z
+
+# ---------------------- 模块打包临时目录 ----------------------
+META-INF/
+!META-INF/com/
+META-INF/com/
+!META-INF/com/google/
+META-INF/com/google/
+!META-INF/com/google/android/
+META-INF/com/google/android/
+!META-INF/com/google/android/update-binary
+!META-INF/com/google/android/updater-script
+
+# ---------------------- 编译 / 构建工具 ----------------------
+build/
+out/
+bin/
+obj/
+gen/
+libs/
+.gradle/
+gradle/
+gradlew
+gradlew.bat
+*.iml
+*.iws
+*.ipr
+.idea/
+.classpath
+.project
+.settings/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---------------------- 系统与编辑器临时文件 ----------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.rej
+*.patch
+
+# ---------------------- 模块运行时生成文件（本地测试） ----------------------
+# 注意：这些文件通常位于 /data/adb/tricky_store/，但若在项目目录中测试则忽略
+*.pid
+*.lock
+*.pending
+*.tmp
+*.bak
+
+# ---------------------- 敏感信息 ----------------------
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+keystore.*
+secret.*
+.env
+*.local
+local.properties
+
+# ---------------------- 文档与辅助文件 ----------------------
+# 忽略 IDE 生成的文档索引
+*.toc
+*.aux
+*.out
+*.synctex.gz
+
+# 忽略备份文件
+*.backup
+*.backup.*
+*.old.*
+
+# ---------------------- 模块特定 ----------------------
+# 忽略用户自定义配置（如有）
+user.conf
+custom.conf
+*.override
+
+# 忽略测试脚本
+test_*.sh
+debug_*.sh
+*_test.sh
+
+# 忽略模块安装后的残留（如果模块解压到项目目录）
+META-INF/
+system/
+data/
