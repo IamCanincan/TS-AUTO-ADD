@@ -1,86 +1,74 @@
-## TS-AUTO-ADD (v1.9.86.1-yuzu)
+## TS-AUTO-ADD (v1.8.75.9-yuzu)
+
+```markdown
+## TS-AUTO-ADD (v1.8.75.9-yuzu)
 
 TS-AUTO-ADD 是一个基于 `inotifyd` 的后台守护程序，用于自动化维护 Tricky Store / TEE Simulator 的 `target.txt` 列表，并执行安全补丁日期自动追新与系统属性重置。
 
----
+## 核心功能
 
-### 核心功能
+* **配置自动化**：通过 `inotifyd` 监控 `/data/system/packages.list`，依据应用变更实时更新 `target.txt`。
+* **状态看板管理**：模块 `description` 由后台进程托管，实时显示 `[应用数 | 安全补丁日期 | 更新时间]`。
+* **补丁日期追新**：内置网络拉取机制，定期比对 Google 安全公告，将系统补丁日期校准至当月 05 日。
+* **属性重置**：开机阶段自动执行 `taa_resetprop.sh`，覆盖并锁定关键 Boot 状态与调试属性。
+* **环境兼容**：支持 Magisk、KernelSU 及 APatch 运行环境。
 
-- **应用列表自动同步**  
-  监控 `/data/system/packages.list` 的变化（应用安装/卸载），自动将系统中所有第三方应用包名与用户自定义白名单合并、去重后写入 `target.txt`。
+## 安装与部署
 
-- **用户白名单 `taa_sys.txt`**  
-  用户可手动编辑 `/data/adb/tricky_store/taa_sys.txt`，每行一个包名，添加需要保留的系统应用。模块监控该文件变更并自动合并，文件误删时自动重建默认内容（含 Google 核心三件套）。
+1. 确认 Tricky Store 或 TEE Simulator 已正常启用。
+2. 在 Magisk/KernelSU 中安装本模块压缩包。
+3. 重启设备以启动后台守护进程。
 
-- **安全补丁日期自动更新**  
-  每隔 12 小时检查系统月份变化，若更新则从 Google AOSP 安全公告页面抓取最新日期，取系统日期与网络日期中较新者写入 `security_patch.txt`。同一月份内仅请求一次，避免重复网络访问。
+## 运行状态查询
 
-- **系统属性伪装**  
-  开机阶段执行 `taa_resetprop.sh`，重置关键属性（如 `ro.boot.vbmeta.device_state=locked`、`ro.debuggable=0` 等），模拟锁定状态，有助于通过特定检测。
+安装后，模块详情页的简介将实时更新运行参数：
+`[应用数: X | 补丁: YYYY-MM-05 | 更新: HH:MM]`
 
-- **守护进程自愈**  
-  主进程每 60 秒检查子进程存活状态，异常时自动重启，确保长期稳定运行。
+### 手动同步
 
-- **手动工具 `action.sh`**  
-  提供终端手动同步命令，支持 `--force` 强制刷新补丁日期。
+若需即时执行同步并刷新状态，在终端运行：
 
----
-
-### 安装与部署
-
-1. 确认 Tricky Store 或 TEE Simulator 已正常安装并启用。
-2. 在 Magisk / KernelSU / APatch 中刷入本模块压缩包。
-3. **重启设备**以启动后台守护服务。
-
----
-
-### 使用方法
-
-#### 自动运行
-安装并重启后，所有功能自动生效，无需用户干预。
-
-#### 手动同步
-在终端以 root 权限执行：
 ```bash
-su -c /data/adb/modules/ts-auto-add/action.sh
-```
-强制刷新补丁日期（忽略月份缓存）：
-```bash
-su -c /data/adb/modules/ts-auto-add/action.sh --force
+sh /data/adb/modules/ts-auto-add/action.sh
 ```
 
-#### 自定义白名单
-编辑 `/data/adb/tricky_store/taa_sys.txt`，每行一个包名，保存后模块自动检测并合并。
+强制在线获取安全补丁日期（忽略本地缓存）：
+
+```bash
+sh /data/adb/modules/ts-auto-add/action.sh --force
+```
+
+## 数据配置路径
+
+所有运行时文件存储于 `/data/adb/tricky_store/`：
+
+* `target.txt`：当前自动同步的应用包名列表。
+* `security_patch.txt`：系统安全补丁日期配置文件。
+
+## 属性重置覆盖清单
+
+开机脚本强制执行以下属性校准：
+
+* **安全状态**：`ro.boot.vbmeta.device_state` (locked)，`ro.boot.verifiedbootstate` (green)。
+* **调试状态**：`ro.debuggable` (0)，`ro.build.tags` (release-keys)，`ro.build.type` (user)。
+* **痕迹隐藏**：移除 `recovery` 启动模式痕迹，修正各厂商预设的引导状态属性。
+
+## 更新记录
+
+详细变更请参阅模块根目录下的 `CHANGELOG.md`。
 
 ---
 
-### 文件与路径说明
+### v1.8.75.9-yuzu 主要更新
 
-所有数据文件存储于 `/data/adb/tricky_store/`：
+* **安全补丁配置统一**：`security_patch.txt` 中 `system` 字段改为动态日期，与 `boot`/`vendor` 保持一致，消除配置差异。
+* **应用列表健壮性**：生成 `target.txt` 时自动过滤空行，防止无第三方应用时出现空白条目，确保统计准确。
 
-| 文件 | 说明 |
-|------|------|
-| `target.txt` | 最终生成的 Tricky Store 应用列表（自动维护） |
-| `taa_sys.txt` | 用户自定义白名单，可手动编辑（默认含 Google 三件套） |
-| `security_patch.txt` | 安全补丁日期配置（自动维护） |
-| `.ts_lock` | 进程锁（优先使用 flock） |
-| `.ts_tmp` | 临时文件，用于原子写入 |
-| `.last_month` | 月份缓存，控制网络请求频率 |
-| `.ts_daemon_main.pid` | 主守护进程 PID |
+### v1.7.64.8-yuzu 主要更新
 
----
-
-### 卸载说明
-
-- 卸载模块会自动终止后台进程、删除 PID 文件、锁文件、临时缓存及专属白名单 `taa_sys.txt`。
-- `target.txt` 和 `security_patch.txt` 被保留，以免影响其他模块或手动配置。
-
----
-
-### 更新与兼容性
-
-- 当前版本：**v1.9.86.1-yuzu**
-- 支持 Magisk、KernelSU、APatch
-- 要求系统支持 `inotifyd`（通常由 BusyBox 提供）
-
-更详细的版本更新记录请参阅模块根目录下的 `CHANGELOG.md` 文件。
+* **进程管理完善**：增加补丁更新进程 PID 文件（`.ts_patch.pid`），解决升级后进程残留问题。
+* **手动工具增强**：`action.sh` 增加互斥锁机制和 `--force` 参数，支持强制刷新安全补丁。
+* **Shell 兼容性修复**：`taa_resetprop.sh` 改用 POSIX 兼容语法，确保在所有 Android 环境下正常运行。
+* **锁机制优化**：增加超时（30 秒）并强制清理残留锁，避免死锁。
+* **网络请求增强**：为 curl / wget 添加 `User-Agent` 头，提高访问成功率。
+* **安装与卸载完善**：同步清理新增的 PID 文件和进程，确保无残留。

@@ -8,7 +8,7 @@ MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
 BASE="/data/adb/tricky_store"
 PATCH_CONFIG_FILE="$BASE/security_patch.txt"
-LOCK_FILE="$BASE/.ts_lock"
+LOCK_DIR="$BASE/.ts_lock"
 PATCH_CACHE_FILE="$BASE/.last_month"
 TMP="$BASE/.ts_tmp"
 
@@ -19,28 +19,25 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# ---------- 锁 ----------
+# ---------- 锁（mkdir 原子目录锁） ----------
 acquire_lock() {
-    if command -v flock >/dev/null 2>&1; then
-        exec 200>"$LOCK_FILE"
-        flock -w 30 200 || { echo " 获取锁超时"; return 1; }
-        return 0
-    else
-        local timeout=30
-        while [ $timeout -gt 0 ]; do
-            if mkdir "$LOCK_FILE" 2>/dev/null; then return 0; fi
-            sleep 1; timeout=$((timeout-1))
-        done
-        rmdir "$LOCK_FILE" 2>/dev/null; mkdir "$LOCK_FILE" 2>/dev/null || return 1
-        return 0
-    fi
+    local timeout=30
+    local waited=0
+    while [ $waited -lt $timeout ]; do
+        if mkdir "$LOCK_DIR" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    # 超时强制清理
+    rmdir "$LOCK_DIR" 2>/dev/null
+    mkdir "$LOCK_DIR" 2>/dev/null || return 1
+    return 0
 }
+
 release_lock() {
-    if command -v flock >/dev/null 2>&1; then
-        flock -u 200 2>/dev/null; exec 200>&-
-    else
-        rmdir "$LOCK_FILE" 2>/dev/null
-    fi
+    rmdir "$LOCK_DIR" 2>/dev/null
 }
 
 # ---------- 工具函数 ----------

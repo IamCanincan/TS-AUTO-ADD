@@ -11,8 +11,7 @@ TARGET="$BASE/target.txt"
 WATCH_FILE="/data/system/packages.list"
 TMP="${BASE}/.ts_tmp"
 PENDING="${BASE}/.ts_pending"
-LOCK_FILE="${BASE}/.ts_lock"
-LOCK_FD=200
+LOCK_DIR="${BASE}/.ts_lock"
 
 PATCH_CONFIG_FILE="$BASE/security_patch.txt"
 PATCH_BACKUP_FILE="$BASE/security_patch.txt.bak"
@@ -26,41 +25,25 @@ log_info() { logger -t TS-AUTO -p info "$*"; }
 log_warn() { logger -t TS-AUTO -p warn "$*"; }
 log_err()  { logger -t TS-AUTO -p err "$*"; }
 
-# ---------- 锁（优先 flock，回退 mkdir） ----------
+# ---------- 锁（mkdir 原子目录锁） ----------
 acquire_lock() {
-    if command -v flock >/dev/null 2>&1; then
-        eval "exec $LOCK_FD>$LOCK_FILE"
-        if flock -n $LOCK_FD; then
+    local timeout=30
+    local waited=0
+    while [ $waited -lt $timeout ]; do
+        if mkdir "$LOCK_DIR" 2>/dev/null; then
             return 0
-        else
-            log_warn "flock 超时，强制获取"
-            flock -w 30 $LOCK_FD && return 0
-            log_err "无法获取锁"
-            return 1
         fi
-    else
-        local timeout=30
-        while [ $timeout -gt 0 ]; do
-            if mkdir "$LOCK_FILE" 2>/dev/null; then
-                return 0
-            fi
-            sleep 1
-            timeout=$((timeout - 1))
-        done
-        log_warn "mkdir 锁超时，强制清理"
-        rmdir "$LOCK_FILE" 2>/dev/null
-        mkdir "$LOCK_FILE" 2>/dev/null || return 1
-        return 0
-    fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    log_warn "锁获取超时，强制清理"
+    rmdir "$LOCK_DIR" 2>/dev/null
+    mkdir "$LOCK_DIR" 2>/dev/null || return 1
+    return 0
 }
 
 release_lock() {
-    if command -v flock >/dev/null 2>&1; then
-        flock -u $LOCK_FD 2>/dev/null
-        eval "exec $LOCK_FD>&-" 2>/dev/null
-    else
-        rmdir "$LOCK_FILE" 2>/dev/null
-    fi
+    rmdir "$LOCK_DIR" 2>/dev/null
 }
 
 # ---------- 模块描述更新 ----------
@@ -111,7 +94,7 @@ do_sync() {
 
 dispatch_sync() {
     touch "$PENDING"
-    acquire_lock || { rm -f "$PENDING"; return 1; }
+    acquire_lock || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
         sleep 1
@@ -218,7 +201,7 @@ for pid_file in "$BASE/.ts_daemon_b1.pid" "$BASE/.ts_daemon_b2.pid" "$BASE/.ts_p
     fi
 done
 rm -f "$TMP" "$PENDING"
-release_lock
+rm -rf "$LOCK_DIR"
 
 # 等待系统启动完成
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
@@ -262,22 +245,30 @@ MONITOR1_PID=$!
         sleep 2
     done
 ) &
-MONITOR2_PID=$?
+MONITOR2_PID=$!
 
 echo $$ > "$MAIN_PID_FILE"
 
 # 主进程健康监管
 trap 'log_info "收到退出信号，终止子进程"; kill $PATCH_PID $MONITOR1_PID $MONITOR2_PID 2>/dev/null; rm -f "$MAIN_PID_FILE"; exit' INT TERM
 
+# 子进程重启计数器（防止频繁重启）
+restart_count=0
+max_restart=5
+reset_interval=600  # 10分钟内超过5次则进入冷静期
+
 while true; do
     sleep 60
+    # 补丁进程
     if ! kill -0 $PATCH_PID 2>/dev/null; then
-        log_warn "补丁进程重启"
+        log_warn "补丁进程重启 (计数 $restart_count)"
         ( while true; do update_security_patch; sleep 43200; done ) &
         PATCH_PID=$!
+        restart_count=$((restart_count + 1))
     fi
+    # 监控1
     if ! kill -0 $MONITOR1_PID 2>/dev/null; then
-        log_warn "监控1 (packages.list) 重启"
+        log_warn "监控1 (packages.list) 重启 (计数 $restart_count)"
         (
             while true; do
                 [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
@@ -286,9 +277,11 @@ while true; do
             done
         ) &
         MONITOR1_PID=$!
+        restart_count=$((restart_count + 1))
     fi
+    # 监控2
     if ! kill -0 $MONITOR2_PID 2>/dev/null; then
-        log_warn "监控2 (taa_sys.txt) 重启"
+        log_warn "监控2 (taa_sys.txt) 重启 (计数 $restart_count)"
         (
             TAA_SYS_FILE="$BASE/taa_sys.txt"
             while true; do
@@ -298,5 +291,13 @@ while true; do
             done
         ) &
         MONITOR2_PID=$!
+        restart_count=$((restart_count + 1))
+    fi
+
+    # 若重启过于频繁，则进入冷静期（延长检查间隔）
+    if [ $restart_count -ge $max_restart ]; then
+        log_warn "子进程频繁重启，进入冷静期 10 分钟"
+        sleep $reset_interval
+        restart_count=0
     fi
 done
