@@ -1,8 +1,7 @@
 #!/system/bin/sh
-#=============================================================================
-# 手动管理脚本 (action.sh)
-# 功能: 手动触发应用列表与安全补丁日期的同步，并更新 module.prop 的描述信息。
-#=============================================================================
+# 模块手动管理脚本: action.sh
+# 用途: 在终端中手动触发应用列表与安全补丁的同步，
+#       更新 module.prop 中的状态描述。
 
 MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
@@ -12,11 +11,13 @@ LOCK_DIR="$BASE/.ts_lock"
 PATCH_CACHE_FILE="$BASE/.last_month"
 TMP="$BASE/.ts_tmp"
 
-#=============================================================================
-# 工具函数
-#=============================================================================
+# 补充前台运行环境所需的环境变量
+export PATH="/providers/active/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
-# 进程互斥锁：基于 mkdir 原子操作防止并发冲突
+# ---------- 工具函数 ----------
+
+# 创建目录互斥锁，防止并发执行。
+# 若 10 秒内无法获取锁，输出错误并返回非零值。
 acquire_lock() {
     local timeout=10
     while [ $timeout -gt 0 ]; do
@@ -30,15 +31,15 @@ acquire_lock() {
     return 1
 }
 
-# 释放互斥锁
+# 移除锁目录。
 release_lock() { rmdir "$LOCK_DIR" 2>/dev/null; }
 
-# 日期格式化：正则提取 YYYY-MM-DD
+# 提取 YYYY-MM-DD 格式的日期（年份 2020 及以后）。
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
 
-# 日期校正：将 01 日修正为 05 日以匹配常规发布习惯
+# 若日期为 *-01，则替换为 *-05，以匹配安全公告发布日期。
 force_to_05() {
     local in_date="$1"
     if [ -n "$in_date" ]; then
@@ -49,12 +50,12 @@ force_to_05() {
     fi
 }
 
-# 获取本地系统的安全补丁日期属性
+# 获取系统安全补丁日期并标准化为 05 日。
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }
 
-# 抓取并解析 Google 官方公告页面的补丁日期
+# 从给定的 Google 公告页面在线抓取补丁日期。
 fetch_online_date() {
     local url="$1"
     local html=""
@@ -83,7 +84,7 @@ fetch_online_date() {
     force_to_05 "$raw_date_backup"
 }
 
-# 日期对比：返回两个日期中较新的一个
+# 比较两个日期字符串的大小，返回较新（较大）的值。
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
@@ -93,7 +94,7 @@ pick_newer() {
     [ "$n1" -ge "$n2" ] && echo "$d1" || echo "$d2"
 }
 
-# 更新 module.prop 文件中的数据摘要描述
+# 更新 module.prop 的描述信息，显示当前状态。
 update_module_status() {
     [ -f "$PROP_FILE" ] || return 0
     local app_count=0
@@ -116,9 +117,7 @@ update_module_status() {
     chmod 644 "$PROP_FILE" 2>/dev/null
 }
 
-#=============================================================================
-# 参数解析
-#=============================================================================
+# ---------- 参数解析 ----------
 FORCE_MODE=0
 case "$1" in
     --force|-f)
@@ -131,9 +130,7 @@ case "$1" in
         ;;
 esac
 
-#=============================================================================
-# 主业务流程
-#=============================================================================
+# ---------- 主流程 ----------
 clear
 echo "===================================================="
 echo "          TS-AUTO-ADD 手动同步工具"
@@ -147,14 +144,13 @@ echo "===================================================="
 
 acquire_lock || exit 1
 
-#-----------------------------------------------------------------------------
-# 步骤 1: 整合自定义系统应用和第三方应用包名
-#-----------------------------------------------------------------------------
 echo ""
 echo "[阶段 1/2] 同步第三方应用包名列表..."
 echo "----------------------------------------------------"
 mkdir -p "$BASE"
-APPS_3=$(pm list packages -3 2>/dev/null | sed -n 's/^package://p')
+
+# 获取当前安装的所有第三方应用程序列表
+APPS_3=$(cmd package list packages -3 2>/dev/null | sed -n 's/^package://p')
 APPS_3_COUNT=$(echo "$APPS_3" | wc -l)
 
 TAA_SYS_FILE="$BASE/taa_sys.txt"
@@ -180,12 +176,9 @@ if [ -s "$TMP" ]; then
     echo " [状态] 阶段 1 完成（总条目: $TOTAL_LINES）"
 else
     rm -f "$TMP"
-    echo " [错误] 未获取到第三方应用列表（可能 pm 命令不可用），阶段 1 异常"
+    echo " [错误] 未获取到应用列表，阶段 1 异常"
 fi
 
-#-----------------------------------------------------------------------------
-# 步骤 2: 安全补丁层级获取与对齐
-#-----------------------------------------------------------------------------
 echo ""
 echo "[阶段 2/2] 同步安全补丁日期..."
 echo "----------------------------------------------------"
@@ -197,6 +190,7 @@ if [ -z "$SYSTEM_DATE" ]; then
 fi
 echo "  系统补丁日期: $SYSTEM_DATE"
 
+# 获取年-月组合，用于本地缓存失效判断
 SYS_YM="${SYSTEM_DATE%-*}"
 NEED_ONLINE=0
 
@@ -226,6 +220,7 @@ if [ $NEED_ONLINE -eq 1 ]; then
         fi
     done
     if [ -n "$NET_DATE" ]; then
+        # 挑选网络日期与系统日期中较新的一个
         NEWER=$(pick_newer "$SYSTEM_DATE" "$NET_DATE")
         if [ "$NEWER" = "$NET_DATE" ] && [ "$NET_DATE" != "$SYSTEM_DATE" ]; then
             FINAL_DATE="$NET_DATE"
