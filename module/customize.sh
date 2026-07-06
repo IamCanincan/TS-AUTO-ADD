@@ -21,16 +21,12 @@ if [ ! -f "$BASE_DIR/target.txt" ]; then
 fi
 ui_print "  ✓ 工作目录已就绪"
 
-# 检查 inotifyd 命令是否存在并可执行
+# 检查 inotifyd 命令是否存在
 if ! command -v inotifyd >/dev/null 2>&1; then
-    ui_print "  ✗ 未找到 inotifyd 命令"
-    abort "安装终止，请确认系统内核支持 inotify。"
+    ui_print "  ✗ 未找到 inotifyd 命令，系统不支持文件事件监听"
+    abort "安装终止，请确认内核已启用 inotify 或安装 busybox 包含 inotifyd。"
 fi
-if ! inotifyd -h >/dev/null 2>&1; then
-    ui_print "  ✗ inotifyd 执行失败"
-    abort "安装终止，请检查系统环境。"
-fi
-ui_print "  ✓ inotifyd 工具可用"
+ui_print "  ✓ inotifyd 工具已存在"
 
 ui_print " "
 ui_print "[2/6] 设置核心脚本权限"
