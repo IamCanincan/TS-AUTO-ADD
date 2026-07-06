@@ -1,7 +1,8 @@
 #!/system/bin/sh
-# 模块手动管理脚本: action.sh
-# 用途: 在终端中手动触发应用列表与安全补丁的同步，
-#       更新 module.prop 中的状态描述。
+#=============================================================================
+# 手动管理脚本 (action.sh)
+# 功能: 手动全域抓取、防丢行重组并同步，强制校正白名单配置。
+#=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
@@ -11,13 +12,10 @@ LOCK_DIR="$BASE/.ts_lock"
 PATCH_CACHE_FILE="$BASE/.last_month"
 TMP="$BASE/.ts_tmp"
 
-# 补充前台运行环境所需的环境变量
 export PATH="/providers/active/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
 # ---------- 工具函数 ----------
 
-# 创建目录互斥锁，防止并发执行。
-# 若 10 秒内无法获取锁，输出错误并返回非零值。
 acquire_lock() {
     local timeout=10
     while [ $timeout -gt 0 ]; do
@@ -31,15 +29,12 @@ acquire_lock() {
     return 1
 }
 
-# 移除锁目录。
 release_lock() { rmdir "$LOCK_DIR" 2>/dev/null; }
 
-# 提取 YYYY-MM-DD 格式的日期（年份 2020 及以后）。
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
 
-# 若日期为 *-01，则替换为 *-05，以匹配安全公告发布日期。
 force_to_05() {
     local in_date="$1"
     if [ -n "$in_date" ]; then
@@ -50,12 +45,10 @@ force_to_05() {
     fi
 }
 
-# 获取系统安全补丁日期并标准化为 05 日。
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }
 
-# 从给定的 Google 公告页面在线抓取补丁日期。
 fetch_online_date() {
     local url="$1"
     local html=""
@@ -84,7 +77,6 @@ fetch_online_date() {
     force_to_05 "$raw_date_backup"
 }
 
-# 比较两个日期字符串的大小，返回较新（较大）的值。
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
@@ -94,7 +86,6 @@ pick_newer() {
     [ "$n1" -ge "$n2" ] && echo "$d1" || echo "$d2"
 }
 
-# 更新 module.prop 的描述信息，显示当前状态。
 update_module_status() {
     [ -f "$PROP_FILE" ] || return 0
     local app_count=0
@@ -133,30 +124,29 @@ esac
 # ---------- 主流程 ----------
 clear
 echo "===================================================="
-echo "          TS-AUTO-ADD 手动同步工具"
+echo "          TS-AUTO-ADD 全域手动同步工具"
 echo "===================================================="
 echo " 启动时间 : $(date '+%Y-%m-%d %H:%M:%S')"
 echo " 工作路径 : $BASE"
-if [ $FORCE_MODE -eq 1 ]; then
-    echo " 强制模式 : 启用（忽略缓存，在线获取）"
-fi
 echo "===================================================="
 
 acquire_lock || exit 1
 
 echo ""
-echo "[阶段 1/2] 同步第三方应用包名列表..."
+echo "[阶段 1/2] 提取多域第三方包及系统白名单包名..."
 echo "----------------------------------------------------"
 mkdir -p "$BASE"
 
-# 获取当前安装的所有第三方应用程序列表
-APPS_3=$(cmd package list packages -3 2>/dev/null | sed -n 's/^package://p')
+# 全域获取（包含各隔离域下的第三方独立实例包）
+APPS_3=$(cmd package list packages -3 -u --user all 2>/dev/null | sed -n 's/^package://p')
 APPS_3_COUNT=$(echo "$APPS_3" | wc -l)
 
 TAA_SYS_FILE="$BASE/taa_sys.txt"
 {
+    # 强制进行防截断整合
     if [ -f "$TAA_SYS_FILE" ]; then
         cat "$TAA_SYS_FILE"
+        echo ""
     else
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n"
     fi
@@ -167,16 +157,16 @@ if [ -s "$TMP" ]; then
     if ! cmp -s "$TMP" "$BASE/target.txt"; then
         mv -f "$TMP" "$BASE/target.txt"
         chmod 644 "$BASE/target.txt"
-        echo " [信息] target.txt 已更新（第三方应用数: $APPS_3_COUNT）"
+        echo " [信息] target.txt 已重构并更新（合并第三方应用数: $APPS_3_COUNT）"
     else
         rm -f "$TMP"
-        echo " [信息] 应用列表无变化，未更新文件"
+        echo " [信息] 全域包名列表无变动，跳过物理覆写"
     fi
     TOTAL_LINES=$(wc -l < "$BASE/target.txt")
-    echo " [状态] 阶段 1 完成（总条目: $TOTAL_LINES）"
+    echo " [状态] 阶段 1 完成（当前 target.txt 总包数: $TOTAL_LINES）"
 else
     rm -f "$TMP"
-    echo " [错误] 未获取到应用列表，阶段 1 异常"
+    echo " [错误] 获取列表异常，阶段 1 终止"
 fi
 
 echo ""
@@ -184,13 +174,12 @@ echo "[阶段 2/2] 同步安全补丁日期..."
 echo "----------------------------------------------------"
 SYSTEM_DATE=$(get_system_date)
 if [ -z "$SYSTEM_DATE" ]; then
-    echo " [错误] 系统安全补丁日期为空，无法继续"
+    echo " [错误] 无法定位系统内置安全补丁字段"
     release_lock
     exit 1
 fi
 echo "  系统补丁日期: $SYSTEM_DATE"
 
-# 获取年-月组合，用于本地缓存失效判断
 SYS_YM="${SYSTEM_DATE%-*}"
 NEED_ONLINE=0
 
@@ -204,8 +193,6 @@ if [ -f "$PATCH_CACHE_FILE" ] && [ $FORCE_MODE -eq 0 ]; then
     fi
 else
     NEED_ONLINE=1
-    [ $FORCE_MODE -eq 1 ] && echo "  强制模式启用，执行在线获取"
-    [ ! -f "$PATCH_CACHE_FILE" ] && echo "  无缓存文件，执行在线获取"
 fi
 
 FINAL_DATE="$SYSTEM_DATE"
@@ -220,7 +207,6 @@ if [ $NEED_ONLINE -eq 1 ]; then
         fi
     done
     if [ -n "$NET_DATE" ]; then
-        # 挑选网络日期与系统日期中较新的一个
         NEWER=$(pick_newer "$SYSTEM_DATE" "$NET_DATE")
         if [ "$NEWER" = "$NET_DATE" ] && [ "$NET_DATE" != "$SYSTEM_DATE" ]; then
             FINAL_DATE="$NET_DATE"
@@ -261,6 +247,6 @@ echo "  已更新 module.prop 描述信息"
 release_lock
 echo ""
 echo "===================================================="
-echo " [结束] 手动同步流程执行完毕"
+echo " [结束] 全域同步流程执行完毕"
 echo "===================================================="
 exit 0

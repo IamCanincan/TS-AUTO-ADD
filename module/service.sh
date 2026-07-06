@@ -1,7 +1,9 @@
 #!/system/bin/sh
-# 模块后台服务脚本: service.sh
-# 功能: 开机启动，维持 target.txt 与 security_patch.txt 的自动同步。
-#       包含应用列表更新、安全补丁定期刷新及 packages.list 变更监听。
+#=============================================================================
+# 后台服务脚本 (service.sh)
+# 功能: 开机启动，维持 target.txt 与 security_patch.txt 的全自动化高保真同步。
+# 机制: 优化了包名提取作用域，支持多用户、分身应用及非标准换行文本的完整解析。
+#=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
@@ -18,13 +20,11 @@ PATCH_CONFIG_FILE="$BASE/security_patch.txt"
 PATCH_BACKUP_FILE="$BASE/security_patch.txt.bak"
 PATCH_CACHE_FILE="$BASE/.last_month"
 
-# 强制注入完整的标准系统环境变量，保障后台孤儿进程的命令执行权限与路径寻址
+# 强制补充完整的标准系统环境变量，保障后台进程的跨域权限
 export PATH="/providers/active/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
 # ---------- 工具函数 ----------
 
-# 创建目录互斥锁，防止并发执行。
-# 超时 30 秒后尝试强制清理残留锁并重建。
 acquire_lock() {
     local timeout=30
     while [ $timeout -gt 0 ]; do
@@ -39,11 +39,8 @@ acquire_lock() {
     return 0
 }
 
-# 移除锁目录。
 release_lock() { rmdir "$LOCK_DIR" 2>/dev/null; }
 
-# 更新 module.prop 的 description 字段。
-# 显示应用数、补丁日期及最后更新时间。
 update_module_status() {
     [ -f "$PROP_FILE" ] || return 0
     local app_count=0
@@ -66,26 +63,27 @@ update_module_status() {
     chmod 644 "$PROP_FILE" 2>/dev/null
 }
 
-# 执行应用列表同步：收集三个 Google 包及所有第三方包，去重后写入 target.txt。
-# 使用 sed '/^$/d' 过滤可能出现的空行。
+# 核心同步逻辑：增强全域抓取，解决换行截断和多用户分身包遗漏问题
 do_sync() {
     mkdir -p "$BASE"
     local TAA_SYS_FILE="$BASE/taa_sys.txt"
     {
-        # 防御性读取：若自定义白名单文件存在则读取，不存在则回退至默认核心包
+        # 处理 taa_sys.txt：即使尾部缺失换行符，也能通过额外的 echo 补全流，防止最后一行丢失
         if [ -f "$TAA_SYS_FILE" ]; then
             cat "$TAA_SYS_FILE"
+            echo "" 
         else
             printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n"
         fi
-        # 使用 cmd package 规避 Android 13+ Java 框架丢失 CLASSPATH 的隔离缺陷
-        cmd package list packages -3 2>/dev/null | sed -n 's/^package://p'
+        # --user all 抓取全域（主用户、应用双开、工作资料）;-u 包含冻结及隐藏应用
+        cmd package list packages -3 -u --user all 2>/dev/null | sed -n 's/^package://p'
     } | sort -u | sed '/^$/d' > "$TMP"
+    
     if [ -s "$TMP" ]; then
         if ! cmp -s "$TMP" "$TARGET"; then
             mv -f "$TMP" "$TARGET"
             chmod 644 "$TARGET"
-            logger -t TrickyStore "target.txt updated"
+            logger -t TrickyStore "target.txt updated successfully"
         else
             rm -f "$TMP"
         fi
@@ -96,7 +94,6 @@ do_sync() {
     update_module_status
 }
 
-# 带锁和防抖的同步调度：标记 PENDING，获取锁，处理多次触发合并，执行 do_sync。
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock || { logger -t TrickyStore "lock failed, skip sync"; return 1; }
@@ -108,18 +105,14 @@ dispatch_sync() {
     release_lock
 }
 
-# 提取 YYYY-MM-DD 格式的日期（年份 2020 及以后）。
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
 
-# 获取系统安全补丁日期并标准化为 05 日。
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }
 
-# 若日期为 *-01，则替换为 *-05，以匹配安全公告发布日期。
-# 其他日期保持不变。
 force_to_05() {
     local in_date="$1"
     if [ -n "$in_date" ]; then
@@ -130,9 +123,6 @@ force_to_05() {
     fi
 }
 
-# 从给定 URL 获取 HTML，提取安全补丁日期。
-# 优先匹配包含关键词的段落，否则返回首个符合格式的日期。
-# 返回空值表示获取或解析失败。
 fetch_online_date() {
     local url="$1"
     local html=""
@@ -158,8 +148,6 @@ fetch_online_date() {
     force_to_05 "$raw_date_backup"
 }
 
-# 比较两个日期，返回较新的日期。
-# 若任一为空，则返回另一个。
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
@@ -169,8 +157,6 @@ pick_newer() {
     [ "$n1" -ge "$n2" ] && echo "$d1" || echo "$d2"
 }
 
-# 更新 security_patch.txt：取系统日期与在线获取日期的较新值写入。
-# 使用 .last_month 缓存月份，避免重复请求。
 update_security_patch() {
     mkdir -p "$BASE"
     local SYSTEM_DATE=$(get_system_date)
@@ -221,20 +207,18 @@ EOF
 # ---------- 主入口 ----------
 case "$1" in
     "")
-        # 正常开机无参数驻留
         ;;
     "--sync")
         dispatch_sync
         exit 0
         ;;
     *)
-        # 响应后台事件流调用
         dispatch_sync
         exit 0
         ;;
 esac
 
-# ---------- 清理旧进程 ----------
+# ---------- 清理历史进程树标记 ----------
 if [ -f "$PID_FILE" ]; then
     old_pids="$(cat "$PID_FILE")"
     for p in $old_pids; do
@@ -255,16 +239,15 @@ fi
 rm -f "$TMP" "$PENDING"
 rm -rf "$LOCK_DIR"
 
-# 等待系统启动完成
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 1
 done
 
-# 首次同步
+# 开机完成首次同步
 do_sync
 
-# ---------- 启动后台常驻分支维护进程组 ----------
-# 子进程 A：每 12 小时更新安全补丁
+# ---------- 后台常驻分支服务树 ----------
+
 (
     update_security_patch
     while true; do
@@ -274,7 +257,6 @@ do_sync
 ) &
 echo $! > "$PATCH_PID_FILE"
 
-# 子进程 B1：独立监听 packages.list (确保低版本内嵌工具箱 inotifyd 参数不产生闪退)
 (
     trap 'release_lock; rm -f "$PENDING"; exit' EXIT INT TERM
     while true; do
@@ -286,7 +268,6 @@ echo $! > "$PATCH_PID_FILE"
 ) &
 B1_PID=$!
 
-# 子进程 B2：独立监听 taa_sys.txt (规避文本编辑器保存行为带来的 inode 节点解绑失效)
 (
     trap 'release_lock; rm -f "$PENDING"; exit' EXIT INT TERM
     local TAA_SYS_FILE="$BASE/taa_sys.txt"
@@ -302,7 +283,6 @@ B1_PID=$!
 ) &
 B2_PID=$!
 
-# 统一维护并保存所有监听相关的后台 PID 树
 echo "${B1_PID} ${B2_PID}" > "$PID_FILE"
 
 exit 0
