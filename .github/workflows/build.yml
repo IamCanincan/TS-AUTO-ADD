@@ -1,0 +1,81 @@
+name: Build TS-AUTO-ADD Module
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Parse Module Version
+      id: get_version
+      run: |
+        # 从指定配置文件提取版本号，若不存在则使用时间戳兜底
+        PROP_FILE="./module/module.prop"
+        if [ -f "$PROP_FILE" ]; then
+          VERSION=$(sed -n 's/^version=//p' "$PROP_FILE" | tr -d '[:space:]')
+        fi
+        
+        if [ -z "$VERSION" ]; then
+          VERSION=$(date +'%Y.%m.%d-%H%M')
+        fi
+        
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Inject META-INF & Compress Module
+      run: |
+        # 切换至模块工作目录
+        cd module
+        
+        # 构建全兼容环境所需的 META-INF 目录结构与引导脚本
+        META_DIR="META-INF/com/google/android"
+        mkdir -p "$META_DIR"
+        
+        # 写入通用执行脚本（将控制权移交至本地 customize.sh）
+        cat << 'EOF' > "$META_DIR/update-binary"
+#!/bin/sh
+exec sh "$3/customize.sh" "$1" "$2" "$3"
+EOF
+        chmod +x "$META_DIR/update-binary"
+        echo "dummy" > "$META_DIR/updater-script"
+
+        # 执行文件压缩，输出产物至根目录
+        ZIP_NAME="TS-AUTO-ADD-${{ steps.get_version.outputs.VERSION }}.zip"
+        zip -r "../$ZIP_NAME" ./*
+        
+        # 返回根目录并移除临时生成的 META-INF 目录以保持工作区干净
+        cd ..
+        rm -rf module/META-INF
+
+        # 生成 MD5 校验码文件
+        md5sum "$ZIP_NAME" > "$ZIP_NAME".md5
+
+    - name: Archive Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: TS-AUTO-ADD-${{ steps.get_version.outputs.VERSION }}
+        path: |
+          *.zip
+          *.md5
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/heads/main')
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        name: TS-AUTO-ADD ${{ steps.get_version.outputs.VERSION }}
+        body: |
+          ### Automated Build Environment
+          - **Module Version**: `${{ steps.get_version.outputs.VERSION }}`
+          - **Compatibility**: KernelSU / Magisk / APatch
+        files: |
+          *.zip
+          *.md5
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
