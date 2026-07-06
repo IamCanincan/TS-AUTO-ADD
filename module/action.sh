@@ -1,7 +1,7 @@
 #!/system/bin/sh
 #=============================================================================
 # 手动管理脚本 (action.sh)
-# 功能: 手动全域抓取、防丢行重组并同步，强制校正白名单配置。
+# 功能：手动同步 target.txt 并更新安全补丁日期
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -14,7 +14,10 @@ TMP="$BASE/.ts_tmp"
 
 export PATH="/providers/active/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
-# ---------- 工具函数 ----------
+if [ "$(id -u)" -ne 0 ]; then
+    echo " [错误] 拒绝执行：请在 Root 终端（su）权限下运行此脚本！" >&2
+    exit 1
+fi
 
 acquire_lock() {
     local timeout=10
@@ -25,8 +28,10 @@ acquire_lock() {
         sleep 1
         timeout=$((timeout - 1))
     done
-    echo " [错误] 无法获取锁，可能后台进程正在运行，请稍后重试。" >&2
-    return 1
+    echo " [警告] 锁获取超时，尝试强制清理残余锁..."
+    rmdir "$LOCK_DIR" 2>/dev/null
+    mkdir "$LOCK_DIR" 2>/dev/null || return 1
+    return 0
 }
 
 release_lock() { rmdir "$LOCK_DIR" 2>/dev/null; }
@@ -50,13 +55,13 @@ get_system_date() {
 }
 
 fetch_online_date() {
-    local url="$1"
-    local html=""
+    local url="$1" html=""
     local user_agent="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+    
     if command -v curl >/dev/null 2>&1; then
-        html=$(curl --connect-timeout 5 -Ls -A "$user_agent" "$url" 2>/dev/null)
+        html=$(curl --connect-timeout 5 -m 10 -Ls -A "$user_agent" "$url" 2>/dev/null)
     elif command -v wget >/dev/null 2>&1; then
-        html=$(wget -T 5 --no-check-certificate -U "$user_agent" -qO- "$url" 2>/dev/null)
+        html=$(wget -T 10 --connect-timeout=5 --no-check-certificate -U "$user_agent" -qO- "$url" 2>/dev/null)
     else
         return 1
     fi
@@ -72,9 +77,7 @@ fetch_online_date() {
             return
         fi
     fi
-
-    local raw_date_backup=$(echo "$all_dates" | sort -r | head -n 1)
-    force_to_05 "$raw_date_backup"
+    force_to_05 "$(echo "$all_dates" | sort -r | head -n 1)"
 }
 
 pick_newer() {
@@ -96,35 +99,24 @@ update_module_status() {
         [ -z "$patch_date" ] && patch_date="未知"
     fi
     local status_text="[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]"
-    local tmp_prop="${PROP_FILE}.tmp"
-    rm -f "$tmp_prop"
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            description=*) echo "description=${status_text}" >> "$tmp_prop" ;;
-            *) echo "$line" >> "$tmp_prop" ;;
-        esac
-    done < "$PROP_FILE"
-    mv -f "$tmp_prop" "$PROP_FILE" 2>/dev/null
-    chmod 644 "$PROP_FILE" 2>/dev/null
+    
+    # 使用 @ 作为 sed 定界符，避免 status_text 中的竖线引起语法错误
+    sed -i "s@^description=.*@description=${status_text}@" "$PROP_FILE" 2>/dev/null
 }
 
-# ---------- 参数解析 ----------
 FORCE_MODE=0
 case "$1" in
-    --force|-f)
-        FORCE_MODE=1
-        ;;
+    --force|-f) FORCE_MODE=1 ;;
     --help|-h)
         echo "用法: $0 [--force]"
-        echo "  --force  强制清除月份缓存，重新在线获取安全补丁日期"
+        echo "  --force  强制重新获取网络补丁日期"
         exit 0
         ;;
 esac
 
-# ---------- 主流程 ----------
 clear
 echo "===================================================="
-echo "          TS-AUTO-ADD 全域手动同步工具"
+echo "          TS-AUTO-ADD 手动同步工具"
 echo "===================================================="
 echo " 启动时间 : $(date '+%Y-%m-%d %H:%M:%S')"
 echo " 工作路径 : $BASE"
@@ -133,19 +125,22 @@ echo "===================================================="
 acquire_lock || exit 1
 
 echo ""
-echo "[阶段 1/2] 提取多域第三方包及系统白名单包名..."
+echo "[阶段 1/2] 获取第三方应用及系统白名单包名..."
 echo "----------------------------------------------------"
 mkdir -p "$BASE"
 
-# 全域获取（包含各隔离域下的第三方独立实例包）
-APPS_3=$(cmd package list packages -3 -u --user all 2>/dev/null | sed -n 's/^package://p')
-APPS_3_COUNT=$(echo "$APPS_3" | wc -l)
+# 优先使用 cmd package，降级使用 pm，兼容不同 Android 版本
+APPS_RAW=$(cmd package list packages -3 -u --user all 2>/dev/null)
+if [ -z "$APPS_RAW" ]; then
+    APPS_RAW=$(pm list packages -3 2>/dev/null)
+fi
+APPS_3=$(echo "$APPS_RAW" | sed -n 's/^package://p')
+APPS_3_COUNT=$(echo "$APPS_3" | sed '/^$/d' | wc -l)
 
 TAA_SYS_FILE="$BASE/taa_sys.txt"
 {
-    # 强制进行防截断整合
     if [ -f "$TAA_SYS_FILE" ]; then
-        cat "$TAA_SYS_FILE"
+        cat "$TAA_SYS_FILE" 2>/dev/null
         echo ""
     else
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n"
@@ -157,16 +152,16 @@ if [ -s "$TMP" ]; then
     if ! cmp -s "$TMP" "$BASE/target.txt"; then
         mv -f "$TMP" "$BASE/target.txt"
         chmod 644 "$BASE/target.txt"
-        echo " [信息] target.txt 已重构并更新（合并第三方应用数: $APPS_3_COUNT）"
+        echo " [信息] target.txt 同步成功（第三方应用数: $APPS_3_COUNT）"
     else
         rm -f "$TMP"
-        echo " [信息] 全域包名列表无变动，跳过物理覆写"
+        echo " [信息] 内容未变化，跳过写入"
     fi
     TOTAL_LINES=$(wc -l < "$BASE/target.txt")
-    echo " [状态] 阶段 1 完成（当前 target.txt 总包数: $TOTAL_LINES）"
+    echo " [状态] 阶段 1 完成（当前配置库总行数: $TOTAL_LINES）"
 else
     rm -f "$TMP"
-    echo " [错误] 获取列表异常，阶段 1 终止"
+    echo " [错误] 获取包名列表失败"
 fi
 
 echo ""
@@ -174,11 +169,11 @@ echo "[阶段 2/2] 同步安全补丁日期..."
 echo "----------------------------------------------------"
 SYSTEM_DATE=$(get_system_date)
 if [ -z "$SYSTEM_DATE" ]; then
-    echo " [错误] 无法定位系统内置安全补丁字段"
+    echo " [错误] 无法获取系统安全补丁日期"
     release_lock
     exit 1
 fi
-echo "  系统补丁日期: $SYSTEM_DATE"
+echo "  当前底层日期: $SYSTEM_DATE"
 
 SYS_YM="${SYSTEM_DATE%-*}"
 NEED_ONLINE=0
@@ -187,9 +182,8 @@ if [ -f "$PATCH_CACHE_FILE" ] && [ $FORCE_MODE -eq 0 ]; then
     CACHED_MONTH=$(cat "$PATCH_CACHE_FILE")
     if [ "$CACHED_MONTH" != "$SYS_YM" ]; then
         NEED_ONLINE=1
-        echo "  月份已变化，将尝试在线获取"
     else
-        echo "  缓存月份匹配（$CACHED_MONTH），跳过在线获取"
+        echo "  命中本地缓存（$CACHED_MONTH），跳过网络请求"
     fi
 else
     NEED_ONLINE=1
@@ -198,11 +192,11 @@ fi
 FINAL_DATE="$SYSTEM_DATE"
 NET_DATE=""
 if [ $NEED_ONLINE -eq 1 ]; then
-    echo "  尝试从 Google 安全公告页面获取..."
+    echo "  正在从 Google AOSP 公告页面获取最新补丁日期..."
     for url in "https://source.android.google.cn/docs/security/bulletin/pixel" "https://source.android.google.cn/docs/security/bulletin"; do
         NET_DATE=$(fetch_online_date "$url")
         if [ -n "$NET_DATE" ]; then
-            echo "  从 $url 获取到日期: $NET_DATE"
+            echo "  获取成功: $NET_DATE"
             break
         fi
     done
@@ -210,16 +204,16 @@ if [ $NEED_ONLINE -eq 1 ]; then
         NEWER=$(pick_newer "$SYSTEM_DATE" "$NET_DATE")
         if [ "$NEWER" = "$NET_DATE" ] && [ "$NET_DATE" != "$SYSTEM_DATE" ]; then
             FINAL_DATE="$NET_DATE"
-            echo "  网络日期较新，采用: $FINAL_DATE"
+            echo "  使用较新日期: $FINAL_DATE"
         else
-            echo "  系统日期较新或相同，保留系统日期: $SYSTEM_DATE"
+            echo "  系统日期已是最新或更新，保持不变: $SYSTEM_DATE"
         fi
         echo "$SYS_YM" > "$PATCH_CACHE_FILE"
     else
-        echo "  [警告] 在线获取失败，回退使用系统日期: $SYSTEM_DATE"
+        echo "  [警告] 网络请求失败，回退使用系统日期"
     fi
 else
-    echo "  使用系统日期（未触发在线获取）"
+    echo "  使用缓存日期，不发起网络请求"
 fi
 
 if [ -f "$PATCH_CONFIG_FILE" ]; then
@@ -236,7 +230,7 @@ chown root:root "$PATCH_CONFIG_FILE" 2>/dev/null
 echo "  最终安全补丁配置："
 echo "        +----------------------------------------+"
 while IFS= read -r line; do
-    printf "        | %-38s |\n" "$line"
+    printf "        | %-38.38s |\n" "$line"
 done < "$PATCH_CONFIG_FILE"
 echo "        +----------------------------------------+"
 echo " [状态] 阶段 2 完成"
@@ -247,6 +241,6 @@ echo "  已更新 module.prop 描述信息"
 release_lock
 echo ""
 echo "===================================================="
-echo " [结束] 全域同步流程执行完毕"
+echo " [完成] 手动同步流程结束"
 echo "===================================================="
 exit 0
