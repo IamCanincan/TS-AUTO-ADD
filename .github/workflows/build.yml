@@ -16,10 +16,13 @@ jobs:
     - name: Parse Module Version
       id: get_version
       run: |
-        PROP_FILE="./module/module.prop"
-        if [ -f "$PROP_FILE" ]; then
-          VERSION=$(sed -n 's/^version=//p' "$PROP_FILE" | tr -d '[:space:]')
+        # 逐行安全提取 version 字段
+        VERSION=""
+        if [ -f "./module/module.prop" ]; then
+          VERSION=$(grep '^version=' ./module/module.prop | cut -d= -f2 | tr -d '[:space:]')
         fi
+        
+        # 如果提取失败则采用时间戳作为版本号
         if [ -z "$VERSION" ]; then
           VERSION=$(date +'%Y.%m.%d-%H%M')
         fi
@@ -29,16 +32,16 @@ jobs:
       run: |
         cd module
         
-        # 创建 META-INF 路径
+        # 创建标准的引导文件结构
         mkdir -p META-INF/com/google/android
         
-        # 使用单行 echo 写入引导脚本，完全避开多行语法冲突
-        echo '#!/bin/sh' > META-INF/com/google/android/update-binary
+        # 安全单行写入，完全避开多行语法可能引发的解析故障
+        echo "#!/bin/sh" > META-INF/com/google/android/update-binary
         echo 'exec sh "$3/customize.sh" "$1" "$2" "$3"' >> META-INF/com/google/android/update-binary
         chmod +x META-INF/com/google/android/update-binary
         echo "dummy" > META-INF/com/google/android/updater-script
 
-        # 打包并移动到上级目录
+        # 打包并输出
         ZIP_NAME="TS-AUTO-ADD-${{ steps.get_version.outputs.VERSION }}.zip"
         zip -r "../$ZIP_NAME" ./*
         
@@ -58,7 +61,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/heads/main')
       with:
-        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        tag_name: v${{ steps.get_version.outputs.VERSION }}
         name: TS-AUTO-ADD ${{ steps.get_version.outputs.VERSION }}
         body: |
           ### Automated Build Environment
