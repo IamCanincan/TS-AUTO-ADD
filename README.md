@@ -1,4 +1,4 @@
-根据最新版本 v1.8.75.9-yuzu 的变更，已更新 README 内容如下：
+## TS-AUTO-ADD (v1.8.75.9-yuzu)
 
 ```markdown
 ## TS-AUTO-ADD (v1.8.75.9-yuzu)
@@ -72,4 +72,3 @@ sh /data/adb/modules/ts-auto-add/action.sh --force
 * **锁机制优化**：增加超时（30 秒）并强制清理残留锁，避免死锁。
 * **网络请求增强**：为 curl / wget 添加 `User-Agent` 头，提高访问成功率。
 * **安装与卸载完善**：同步清理新增的 PID 文件和进程，确保无残留。
-```
