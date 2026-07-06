@@ -1,7 +1,9 @@
 #!/system/bin/sh
-# 模块后台服务脚本: service.sh
-# 功能: 开机启动，维持 target.txt 与 security_patch.txt 的自动同步。
-#       包含应用列表更新、安全补丁定期刷新及 packages.list 变更监听。
+#=============================================================================
+# 后台服务脚本 (service.sh)
+# 功能: 系统启动后在后台运行，对 target.txt 与 security_patch.txt 进行全自动同步。
+# 监听机制: 利用内核 inotifyd 对配置文件和包名文件进行阻断式事件流监听。
+#=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
@@ -18,10 +20,11 @@ PATCH_CONFIG_FILE="$BASE/security_patch.txt"
 PATCH_BACKUP_FILE="$BASE/security_patch.txt.bak"
 PATCH_CACHE_FILE="$BASE/.last_month"
 
-# ---------- 工具函数 ----------
+#=============================================================================
+# 工具函数
+#=============================================================================
 
-# 创建目录互斥锁，防止并发执行。
-# 超时 30 秒后尝试强制清理残留锁并重建。
+# 进程互斥锁：防止并发写入冲突，超时自动尝试清理并重建
 acquire_lock() {
     local timeout=30
     while [ $timeout -gt 0 ]; do
@@ -36,11 +39,10 @@ acquire_lock() {
     return 0
 }
 
-# 移除锁目录。
+# 释放互斥锁
 release_lock() { rmdir "$LOCK_DIR" 2>/dev/null; }
 
-# 更新 module.prop 的 description 字段。
-# 显示应用数、补丁日期及最后更新时间。
+# 更新 module.prop 的描述字段
 update_module_status() {
     [ -f "$PROP_FILE" ] || return 0
     local app_count=0
@@ -63,14 +65,19 @@ update_module_status() {
     chmod 644 "$PROP_FILE" 2>/dev/null
 }
 
-# 执行应用列表同步：收集三个 Google 包及所有第三方包，去重后写入 target.txt。
-# 使用 sed '/^$/d' 过滤可能出现的空行。
+# 核心合并行为：将 taa_sys.txt 的内容与第三方应用列表拼装并去重写入 target.txt
 do_sync() {
     mkdir -p "$BASE"
+    local TAA_SYS_FILE="$BASE/taa_sys.txt"
     {
-        printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n"
+        if [ -f "$TAA_SYS_FILE" ]; then
+            cat "$TAA_SYS_FILE"
+        else
+            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n"
+        fi
         pm list packages -3 2>/dev/null | sed -n 's/^package://p'
     } | sort -u | sed '/^$/d' > "$TMP"
+    
     if [ -s "$TMP" ]; then
         if ! cmp -s "$TMP" "$TARGET"; then
             mv -f "$TMP" "$TARGET"
@@ -86,7 +93,7 @@ do_sync() {
     update_module_status
 }
 
-# 带锁和防抖的同步调度：标记 PENDING，获取锁，处理多次触发合并，执行 do_sync。
+# 同步合并调度器：对短时间内的高频触发请求进行排队和去抖动合并
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock || { logger -t TrickyStore "lock failed, skip sync"; return 1; }
@@ -98,18 +105,17 @@ dispatch_sync() {
     release_lock
 }
 
-# 提取 YYYY-MM-DD 格式的日期（年份 2020 及以后）。
+# 提取 YYYY-MM-DD 格式
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
 
-# 获取系统安全补丁日期并标准化为 05 日。
+# 获取本地系统安全补丁日期属性
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }
 
-# 若日期为 *-01，则替换为 *-05，以匹配安全公告发布日期。
-# 其他日期保持不变。
+# 规范补丁日为 05
 force_to_05() {
     local in_date="$1"
     if [ -n "$in_date" ]; then
@@ -120,9 +126,7 @@ force_to_05() {
     fi
 }
 
-# 从给定 URL 获取 HTML，提取安全补丁日期。
-# 优先匹配包含关键词的段落，否则返回首个符合格式的日期。
-# 返回空值表示获取或解析失败。
+# 在线拉取 Google 的 Android 安全公告
 fetch_online_date() {
     local url="$1"
     local html=""
@@ -148,8 +152,7 @@ fetch_online_date() {
     force_to_05 "$raw_date_backup"
 }
 
-# 比较两个日期，返回较新的日期。
-# 若任一为空，则返回另一个。
+# 比较并获取较新日期
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
@@ -159,8 +162,7 @@ pick_newer() {
     [ "$n1" -ge "$n2" ] && echo "$d1" || echo "$d2"
 }
 
-# 更新 security_patch.txt：取系统日期与在线获取日期的较新值写入。
-# 使用 .last_month 缓存月份，避免重复请求。
+# 定时触发的安全补丁更新逻辑
 update_security_patch() {
     mkdir -p "$BASE"
     local SYSTEM_DATE=$(get_system_date)
@@ -208,12 +210,15 @@ EOF
     update_module_status
 }
 
-# ---------- 主入口 ----------
+#=============================================================================
+# 脚本入口点解析
+#=============================================================================
 case "$1" in
     "")
-        # 正常启动守护进程
+        # 常规启动后台驻留服务
         ;;
     "--sync")
+        # 外部单次强行执行同步的快捷入口
         dispatch_sync
         exit 0
         ;;
@@ -223,7 +228,9 @@ case "$1" in
         ;;
 esac
 
-# ---------- 清理旧进程 ----------
+#-----------------------------------------------------------------------------
+# 环境初始化：终止并清理冲突进程及旧执行痕迹
+#-----------------------------------------------------------------------------
 if [ -f "$PID_FILE" ]; then
     old_pid="$(cat "$PID_FILE")"
     kill "$old_pid" 2>/dev/null
@@ -242,16 +249,19 @@ fi
 rm -f "$TMP" "$PENDING"
 rm -rf "$LOCK_DIR"
 
-# 等待系统启动完成
+# 等待 Android 框架完全就绪
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 1
 done
 
-# 首次同步
+# 开机引导时执行基础同步
 do_sync
 
-# ---------- 启动后台子进程 ----------
-# 子进程 A：每 12 小时更新安全补丁
+#-----------------------------------------------------------------------------
+# 分支子进程维护树
+#-----------------------------------------------------------------------------
+
+# 子进程 A: 安全补丁更新轮询时钟 (固定每 12 小时循环一次)
 (
     update_security_patch
     while true; do
@@ -261,12 +271,23 @@ do_sync
 ) &
 echo $! > "$PATCH_PID_FILE"
 
-# 子进程 B：监听 packages.list 变更，触发同步
+# 子进程 B: 实时监控事件常驻守护进程
 (
     trap 'release_lock; rm -f "$PENDING"; exit' EXIT INT TERM
+    local TAA_SYS_FILE="$BASE/taa_sys.txt"
     while true; do
         while [ ! -f "$WATCH_FILE" ]; do sleep 2; done
-        inotifyd "$0" "$WATCH_FILE:w" >/dev/null 2>&1
+        
+        # 当配置文件在运行时不存在，则执行补回
+        if [ ! -f "$TAA_SYS_FILE" ]; then
+            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+            chmod 0644 "$TAA_SYS_FILE"
+        fi
+        
+        # 核心事件双轨监听：
+        # 1. $WATCH_FILE:w -> 监听应用安装或卸载引发的物理存储状态变更
+        # 2. $TAA_SYS_FILE:wy -> 监听用户直接写入或通过第三方工具覆盖保存 taa_sys.txt 文件的行为
+        inotifyd "$0" "$WATCH_FILE:w" "$TAA_SYS_FILE:wy" >/dev/null 2>&1
         dispatch_sync
         sleep 1
     done
