@@ -60,9 +60,10 @@ jobs:
 
       - name: Pack Module to Zip
         run: |
-          # 切换至 module 目录打包，确保压缩包根目录直接就是模块文件（含隐藏文件）
+          # 切换至 module 目录进行相对路径打包，避免 Zip 压缩包内包含外层冗余目录
           cd module
-          zip -r ../${{ steps.version_info.outputs.mod_id }}-${{ steps.version_info.outputs.version }}.zip .
+          # 添加 -x "*.zip" 排除所有 .zip 文件，防止内部嵌套 zip
+          zip -r ../${{ steps.version_info.outputs.mod_id }}-${{ steps.version_info.outputs.version }}.zip ./* -x "*.zip"
           cd ..
 
       - name: Upload Artifact
