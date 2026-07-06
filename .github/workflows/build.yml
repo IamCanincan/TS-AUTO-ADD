@@ -1,0 +1,74 @@
+name: Build Module
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+  pull_request:
+    branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Dynamic Properties Injection
+        id: version_info
+        run: |
+          # 1. 显式声明东八区时区（北京时间）
+          export TZ="Asia/Shanghai"
+          
+          # 2. 生成对应格式的时间戳字符串
+          # TIME_SUFFIX 格式: 20260706104853
+          TIME_SUFFIX=$(date +'%Y%m%d%H%M%S')
+          # NEW_VERSION_CODE 格式: 20260706104853
+          NEW_VERSION_CODE=$(date +'%Y%m%d%H%M%S')
+
+          # 3. 解析原始 module.prop 提取必要字段，并移除可能存在的 Windows 换行符(\r)
+          MOD_ID=$(grep -G '^id=' module/module.prop | cut -d= -f2 | tr -d '\r')
+          ORIGINAL_VERSION=$(grep -G '^version=' module/module.prop | cut -d= -f2 | tr -d '\r')
+          
+          # 4. 组装符合要求的 CI 动态版本名
+          NEW_VERSION="${ORIGINAL_VERSION}-${TIME_SUFFIX}-ci"
+
+          echo "=========================================="
+          echo "原始版本名: $ORIGINAL_VERSION"
+          echo "注入版本名: $NEW_VERSION"
+          echo "注入版本号: $NEW_VERSION_CODE"
+          echo "=========================================="
+
+          # 5. 正则精确匹配并替换原文件内容
+          sed -i "s/^version=.*/version=${NEW_VERSION}/" module/module.prop
+          sed -i "s/^versionCode=.*/versionCode=${NEW_VERSION_CODE}/" module/module.prop
+
+          # 6. 将输出变量注册到 GitHub Step 上下文，供后续打包步骤使用
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "mod_id=${MOD_ID}" >> $GITHUB_OUTPUT
+
+      - name: Pack Module to Zip
+        run: |
+          # 切换至 module 目录进行相对路径打包，避免 Zip 压缩包内包含外层冗余目录
+          cd module
+          zip -r ../${{ steps.version_info.outputs.mod_id }}-${{ steps.version_info.outputs.version }}.zip ./*
+          cd ..
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version_info.outputs.mod_id }}-${{ steps.version_info.outputs.version }}
+          path: "*.zip"
+          retention-days: 30
+          compression-level: 0
