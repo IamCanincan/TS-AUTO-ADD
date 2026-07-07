@@ -6,20 +6,20 @@
 TAA_SYS_FILE="/data/system/ts_auto_add/taa_sys.txt"
 LOG_FILE="/data/local/tmp/ts_auto.log"
 
-# ---------- 日志函数 ----------
+# ---------- 日志函数（直接写入文件，同时尝试 logger） ----------
 log_info() {
     local msg="[INFO] $(date '+%Y-%m-%d %H:%M:%S') $*"
-    echo "$msg" >> "$LOG_FILE"
+    echo "$msg" >> "$LOG_FILE" 2>/dev/null
     logger -t TS-AUTO -p info "$*" 2>/dev/null
 }
 log_warn() {
     local msg="[WARN] $(date '+%Y-%m-%d %H:%M:%S') $*"
-    echo "$msg" >> "$LOG_FILE"
+    echo "$msg" >> "$LOG_FILE" 2>/dev/null
     logger -t TS-AUTO -p warn "$*" 2>/dev/null
 }
 log_err() {
     local msg="[ERR] $(date '+%Y-%m-%d %H:%M:%S') $*"
-    echo "$msg" >> "$LOG_FILE"
+    echo "$msg" >> "$LOG_FILE" 2>/dev/null
     logger -t TS-AUTO -p err "$*" 2>/dev/null
 }
 
@@ -40,6 +40,7 @@ acquire_lock() {
     mkdir "$lock_dir" 2>/dev/null || return 1
     return 0
 }
+
 release_lock() {
     rmdir "$1" 2>/dev/null
 }

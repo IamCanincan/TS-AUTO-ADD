@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 后台守护服务（双文件监控，避免过滤问题）
+# service.sh - 后台守护服务
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -22,6 +22,7 @@ export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
 # ---------- 同步核心 ----------
 do_sync() {
+    log_info "do_sync 开始执行"
     mkdir -p "$BASE"
     mkdir -p "$(dirname "$TAA_SYS_FILE")"
     if [ ! -f "$TAA_SYS_FILE" ]; then
@@ -46,9 +47,11 @@ do_sync() {
             log_info "target.txt 已同步，行数: $(wc -l < "$TARGET")"
         else
             rm -f "$TMP"
+            log_info "target.txt 内容无变化，跳过写入"
         fi
     else
         rm -f "$TMP"
+        log_warn "同步结果为空（可能包管理器异常）"
     fi
     update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
 }
@@ -91,7 +94,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# ---------- 监控线程 1：packages.list ----------
+# 监控 packages.list
 start_monitor_pkg() {
     (
         while true; do
@@ -107,7 +110,7 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# ---------- 监控线程 2：taa_sys.txt（直接监控文件，避免过滤） ----------
+# 监控 taa_sys.txt（直接监控文件）
 start_monitor_sys() {
     (
         while true; do
