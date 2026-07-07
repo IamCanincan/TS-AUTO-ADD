@@ -24,7 +24,7 @@ log_err() {
     logger -t TS-AUTO -p err "$*" 2>/dev/null || true
 }
 
-# ---------- 锁 ----------
+# ---------- 锁与状态初始化 ----------
 acquire_lock() {
     local lock_dir="$1"
     local waited=0
@@ -37,15 +37,22 @@ acquire_lock() {
     done
     log_warn "锁获取超时，强制清理残留锁: $lock_dir"
     rmdir "$lock_dir" 2>/dev/null
-    mkdir "$lock_dir" 2>/dev/null || {
-        log_err "无法创建锁目录: $lock_dir"
-        return 1
-    }
+    mkdir "$lock_dir" 2>/dev/null || return 1
     return 0
 }
 
 release_lock() {
     rmdir "$1" 2>/dev/null || true
+}
+
+ensure_taa_sys() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$file" 2>/dev/null
+        chmod 640 "$file" 2>/dev/null
+        chown root:root "$file" 2>/dev/null
+        chcon system_data_file "$file" 2>/dev/null || true
+    fi
 }
 
 # ---------- 日期处理 ----------
@@ -61,11 +68,11 @@ get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch 2>/dev/null)")"
 }
 
-# 获取在线日期（若网络或工具不可用则返回空）
 fetch_online_date() {
     local url="$1"
-    local html="" patch=""
     local user_agent="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
+    local html="" patch=""
+    
     if command -v curl >/dev/null 2>&1; then
         html=$(curl --connect-timeout 3 -m 6 -Ls -A "$user_agent" "$url" 2>/dev/null) || return 1
     elif command -v wget >/dev/null 2>&1; then
@@ -92,20 +99,19 @@ update_module_status() {
     local patch_date="未配置"
     [ -f "$patch_config" ] && patch_date=$(grep '^boot=' "$patch_config" 2>/dev/null | cut -d'=' -f2)
     [ -z "$patch_date" ] && patch_date="未知"
-    local status_text="[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]"
-    sed -i "s@^description=.*@description=${status_text}@" "$prop_file" 2>/dev/null || true
+    
+    # 动态路径兼容：防止跨界替换导致状态无法刷新
+    sed -i "s/^description=.*/description=[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]/" "$prop_file" 2>/dev/null || true
 }
 
 update_security_patch_core() {
     local base_dir="$1" patch_config="$2" cache_file="$3" prop_file="$4" force_mode="${5:-0}"
     local system_date=$(get_system_date)
-    [ -z "$system_date" ] && {
-        log_err "无法获取系统安全补丁日期"
-        return 1
-    }
+    [ -z "$system_date" ] && { log_err "无法获取系统安全补丁日期"; return 1; }
+    
     local sys_ym="${system_date%-*}"
-
     local need_online=0
+    
     if [ -f "$cache_file" ] && [ "$force_mode" -eq 0 ]; then
         [ "$(cat "$cache_file" 2>/dev/null)" != "$sys_ym" ] && need_online=1
     else
@@ -113,15 +119,15 @@ update_security_patch_core() {
     fi
 
     local final_date="$system_date"
-    if [ $need_online -eq 1 ]; then
-        local net_date=""
-        local retry=0
+    if [ "$need_online" -eq 1 ]; then
+        local net_date="" retry=0
         while [ $retry -lt 2 ] && [ -z "$net_date" ]; do
             for url in "https://source.android.com/docs/security/bulletin/pixel" "https://source.android.google.cn/docs/security/bulletin/pixel"; do
                 net_date=$(fetch_online_date "$url") && break
             done
             [ -z "$net_date" ] && { retry=$((retry+1)); sleep 3; }
         done
+        
         if [ -n "$net_date" ]; then
             local newer=$(pick_newer "$system_date" "$net_date")
             if [ "$newer" = "$net_date" ] && [ "$net_date" != "$system_date" ]; then
@@ -131,20 +137,14 @@ update_security_patch_core() {
         fi
     fi
 
-    # 写入配置文件
     {
         echo "system=$final_date"
         echo "boot=$final_date"
         echo "vendor=$final_date"
-    } > "${patch_config}.tmp" 2>/dev/null || {
-        log_err "无法写入临时补丁文件"
-        return 1
-    }
-    chmod 644 "${patch_config}.tmp" 2>/dev/null || true
-    mv -f "${patch_config}.tmp" "$patch_config" 2>/dev/null || {
-        log_err "无法覆盖补丁文件"
-        return 1
-    }
+    } > "${patch_config}.tmp" 2>/dev/null || return 1
+    
+    chmod 644 "${patch_config}.tmp" 2>/dev/null
+    mv -f "${patch_config}.tmp" "$patch_config" 2>/dev/null || return 1
     update_module_status "$prop_file" "$base_dir" "$patch_config"
     return 0
 }

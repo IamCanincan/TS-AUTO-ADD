@@ -3,7 +3,7 @@
 # action.sh - 手动同步工具
 #=============================================================================
 
-MODDIR="/data/adb/modules/ts-auto-add"
+MODDIR="${0%/*}"
 PROP_FILE="$MODDIR/module.prop"
 BASE="/data/adb/tricky_store"
 PATCH_CONFIG_FILE="$BASE/security_patch.txt"
@@ -29,12 +29,7 @@ echo "================================================"
 acquire_lock "$LOCK_DIR" || exit 1
 
 echo "[1/2] 正在提取与合并第三方应用包名..."
-if [ ! -f "$TAA_SYS_FILE" ]; then
-    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
-    chmod 640 "$TAA_SYS_FILE" 2>/dev/null
-    chown root:root "$TAA_SYS_FILE" 2>/dev/null
-    chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
-fi
+ensure_taa_sys "$TAA_SYS_FILE"
 
 apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
 
