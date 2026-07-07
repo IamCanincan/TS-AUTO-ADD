@@ -112,36 +112,32 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# 监控 taa_sys.txt（改进版：增加错误日志，并自动降级为监控父目录）
+# 监控 taa_sys.txt（增强日志版本）
 start_monitor_sys() {
     (
-        # 先尝试直接监控文件
-        while true; do
-            # 确保文件存在且上下文正确
-            if [ ! -f "$TAA_SYS_FILE" ]; then
-                printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                chmod 640 "$TAA_SYS_FILE"
-                chown root:root "$TAA_SYS_FILE" 2>/dev/null
-                chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || \
-                chcon u:object_r:adb_data_file:s0 "$TAA_SYS_FILE" 2>/dev/null || true
-                log_info "taa_sys.txt 已创建（初始）"
-                dispatch_sync
-            fi
+        log_info "start_monitor_sys 函数开始执行 (PID: $$)"
+        
+        # 确保文件存在
+        if [ ! -f "$TAA_SYS_FILE" ]; then
+            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+            chmod 640 "$TAA_SYS_FILE"
+            chown root:root "$TAA_SYS_FILE" 2>/dev/null
+            chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || \
+            chcon u:object_r:adb_data_file:s0 "$TAA_SYS_FILE" 2>/dev/null || true
+            log_info "taa_sys.txt 已创建（初始）"
+            dispatch_sync
+        fi
 
-            log_info "开始监听 taa_sys.txt (PID: $$)"
-            # 将错误输出追加到日志，便于观察
-            inotifyd - "$TAA_SYS_FILE:wc" 2>>"$LOG_FILE" | while read -r _; do
-                log_info "检测到 taa_sys.txt 变化（文件监听）"
-                dispatch_sync
-            done
-
-            # 若 inotifyd 退出，记录警告，然后尝试监控父目录
-            log_warn "taa_sys.txt 文件监听进程退出，尝试切换为目录监听"
-            break  # 跳出循环，进入下面的目录监听
+        log_info "尝试文件监听: $TAA_SYS_FILE (掩码 wc)"
+        # 将错误输出同时记录到日志文件
+        inotifyd - "$TAA_SYS_FILE:wc" 2>>"$LOG_FILE" | while read -r _; do
+            log_info "检测到 taa_sys.txt 变化（文件监听）"
+            dispatch_sync
         done
+        log_warn "文件监听进程已退出，将切换到目录监听模式"
 
-        # 降级方案：监控父目录 /data/adb/tricky_store
-        log_info "切换到目录监听模式：/data/adb/tricky_store/"
+        # 降级为目录监听
+        log_info "切换到目录监听: /data/adb/tricky_store/"
         while true; do
             inotifyd - "/data/adb/tricky_store/:wc" 2>>"$LOG_FILE" | while read -r path event; do
                 if [ "$path" = "taa_sys.txt" ]; then
