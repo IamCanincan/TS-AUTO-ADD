@@ -33,6 +33,7 @@ if [ ! -f "$TAA_SYS_FILE" ]; then
     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
     chmod 640 "$TAA_SYS_FILE"
     chown root:root "$TAA_SYS_FILE" 2>/dev/null
+    chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
 fi
 
 apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)

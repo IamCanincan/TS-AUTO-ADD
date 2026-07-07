@@ -28,7 +28,8 @@ do_sync() {
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
         chmod 640 "$TAA_SYS_FILE"
         chown root:root "$TAA_SYS_FILE" 2>/dev/null
-        log_info "taa_sys.list 已创建（缺失）"
+        chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
+        log_info "taa_sys.txt 已创建（缺失）"
     fi
 
     {
@@ -110,7 +111,7 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# 监控 taa_sys.list（与 packages.list 完全相同）
+# 监控 taa_sys.txt（使用 wc 掩码提高可靠性）
 start_monitor_sys() {
     (
         while true; do
@@ -118,11 +119,13 @@ start_monitor_sys() {
                 printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
                 chmod 640 "$TAA_SYS_FILE"
                 chown root:root "$TAA_SYS_FILE" 2>/dev/null
-                log_info "taa_sys.list 已创建（初始）"
+                chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
+                log_info "taa_sys.txt 已创建（初始）"
                 dispatch_sync
             fi
-            inotifyd - "$TAA_SYS_FILE:w" 2>/dev/null | while read -r _; do
-                log_info "检测到 taa_sys.list 变化"
+            # 掩码 wc：w=IN_MODIFY, c=IN_CLOSE_WRITE
+            inotifyd - "$TAA_SYS_FILE:wc" 2>/dev/null | while read -r _; do
+                log_info "检测到 taa_sys.txt 变化"
                 dispatch_sync
             done
             sleep 2
@@ -148,7 +151,7 @@ while true; do
         MONITOR1_PID=$(start_monitor_pkg)
     fi
     if ! kill -0 $MONITOR2_PID 2>/dev/null; then
-        log_warn "监控2 (taa_sys.list) 重启"
+        log_warn "监控2 (taa_sys.txt) 重启"
         MONITOR2_PID=$(start_monitor_sys)
     fi
 done

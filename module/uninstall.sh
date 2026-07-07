@@ -34,11 +34,11 @@ rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak"
 # 删除日志
 rm -f "/data/local/tmp/ts_auto.log"
 
-# 删除白名单文件
-rm -f "/data/system/taa_sys.list"
-# 清理旧的可能遗留的目录/文件
-rm -rf "/data/system/ts_auto_add"
+# 删除白名单文件（新路径）
 rm -f "$BASE/taa_sys.txt"
+# 清理旧的可能遗留的目录/文件（旧路径）
+rm -f "/data/system/taa_sys.list"
+rm -rf "/data/system/ts_auto_add"
 
 # 删除属性注入脚本
 rm -f "/data/adb/service.d/taa_resetprop.sh"
