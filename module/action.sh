@@ -19,7 +19,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# ---------- 锁（mkdir 原子目录锁） ----------
+# ---------- 锁（纯 mkdir 目录锁） ----------
 acquire_lock() {
     local timeout=30
     local waited=0
@@ -30,7 +30,7 @@ acquire_lock() {
         sleep 1
         waited=$((waited + 1))
     done
-    # 超时强制清理
+    echo " [警告] 锁获取超时，强制清理残留锁..."
     rmdir "$LOCK_DIR" 2>/dev/null
     mkdir "$LOCK_DIR" 2>/dev/null || return 1
     return 0
@@ -42,14 +42,19 @@ release_lock() {
 
 # ---------- 工具函数 ----------
 clean_date() { echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1; }
+
 force_to_05() {
     local in_date="$1"
     [ -n "$in_date" ] || return
     case "$in_date" in *-01) echo "${in_date%-01}-05" ;; *) echo "$in_date" ;; esac
 }
-get_system_date() { force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"; }
+
+get_system_date() {
+    force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
+}
+
 fetch_online_date() {
-    local url="$1" html=""
+    local url="$1" html="" patch=""
     local user_agent="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
     if command -v curl >/dev/null 2>&1; then
         html=$(curl --connect-timeout 5 -m 10 -Ls -A "$user_agent" "$url" 2>/dev/null)
@@ -58,21 +63,18 @@ fetch_online_date() {
     else
         return 1
     fi
-    local all_dates=$(echo "$html" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | grep -E '\-01$|\-05$')
-    [ -z "$all_dates" ] && return 1
-    local kv_lines=$(echo "$html" | grep -iE 'security patch level|安全补丁级别|bulletin|公告')
-    if [ -n "$kv_lines" ]; then
-        local raw_date=$(echo "$kv_lines" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | grep -E '\-01$|\-05$' | sort -r | head -n 1)
-        [ -n "$raw_date" ] && { force_to_05 "$raw_date"; return; }
-    fi
-    force_to_05 "$(echo "$all_dates" | sort -r | head -n 1)"
+    # 提取表格中第一个日期（通常是当月最新）
+    patch=$(echo "$html" | sed -n 's/.*<td>\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)<\/td>.*/\1/p' | head -n1)
+    [ -n "$patch" ] && echo "$patch" || return 1
 }
+
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
     [ -z "$d2" ] && { echo "$d1"; return; }
     [ "$(echo "$d1" | tr -d '-')" -ge "$(echo "$d2" | tr -d '-')" ] && echo "$d1" || echo "$d2"
 }
+
 update_module_status() {
     [ -f "$PROP_FILE" ] || return 0
     local app_count=0
@@ -140,7 +142,7 @@ if [ $NEED_ONLINE -eq 1 ]; then
     NET_DATE=""
     retry=0
     while [ $retry -lt 3 ] && [ -z "$NET_DATE" ]; do
-        for url in "https://source.android.google.cn/docs/security/bulletin/pixel" "https://source.android.google.cn/docs/security/bulletin"; do
+        for url in "https://source.android.com/docs/security/bulletin/pixel" "https://source.android.google.cn/docs/security/bulletin/pixel"; do
             NET_DATE=$(fetch_online_date "$url")
             [ -n "$NET_DATE" ] && break
         done
