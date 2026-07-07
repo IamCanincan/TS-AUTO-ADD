@@ -3,10 +3,10 @@
 # 公共函数库
 #=============================================================================
 
-TAA_SYS_FILE="/data/local/tmp/ts_auto_add/taa_sys.txt"
+TAA_SYS_FILE="/data/misc/ts_auto_add/taa_sys.txt"
 LOG_FILE="/data/local/tmp/ts_auto.log"
 
-# ---------- 日志函数（同时输出到文件和 logcat） ----------
+# ---------- 日志函数 ----------
 log_info() {
     local msg="[INFO] $(date '+%Y-%m-%d %H:%M:%S') $*"
     echo "$msg" >> "$LOG_FILE"
