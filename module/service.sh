@@ -118,13 +118,15 @@ start_monitor() {
 # 监控 packages.list 变化
 MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
 
-# 监控 taa_sys.txt 变化（若文件被删则重建）
-MONITOR2_PID=$(
+# 监控 taa_sys.txt 变化（文件缺失时重建并主动同步）
+(
     TAA_SYS_FILE="$BASE/taa_sys.txt"
     while true; do
         if [ ! -f "$TAA_SYS_FILE" ]; then
             printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
             chmod 644 "$TAA_SYS_FILE"
+            log_info "taa_sys.txt 已重建，主动触发同步"
+            dispatch_sync
         fi
         inotifyd - "$TAA_SYS_FILE:wy" 2>/dev/null | while read -r _; do
             dispatch_sync
@@ -168,8 +170,12 @@ while true; do
                 if [ ! -f "$TAA_SYS_FILE" ]; then
                     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
                     chmod 644 "$TAA_SYS_FILE"
+                    log_info "taa_sys.txt 已重建，主动触发同步"
+                    dispatch_sync
                 fi
-                inotifyd - "$TAA_SYS_FILE:wy" 2>/dev/null | while read -r _; do dispatch_sync; done
+                inotifyd - "$TAA_SYS_FILE:wy" 2>/dev/null | while read -r _; do
+                    dispatch_sync
+                done
                 sleep 2
             done
         ) &

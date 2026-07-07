@@ -60,11 +60,6 @@ echo ""
 echo "[2/3] 更新安全补丁日期"
 update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" "$FORCE_MODE"
 
-echo ""
-echo "[3/3] 更新模块描述"
-update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
-echo "  描述已刷新"
-
 release_lock "$LOCK_DIR"
 echo "================================================"
 echo "  同步完成"
