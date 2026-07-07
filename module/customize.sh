@@ -51,15 +51,12 @@ fi
 ui_print " "
 ui_print "[5/6] 执行首次应用列表同步"
 
-# 配置文件路径改为模块目录下的 taa_sys.txt
 TAA_SYS_FILE="$BASE_DIR/taa_sys.txt"
 if [ ! -f "$TAA_SYS_FILE" ]; then
     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
     chmod 640 "$TAA_SYS_FILE"
     chown root:root "$TAA_SYS_FILE" 2>/dev/null
-    # 设置 SELinux 上下文以确保 inotifyd 可访问
-    chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || \
-    chcon u:object_r:adb_data_file:s0 "$TAA_SYS_FILE" 2>/dev/null || true
+    chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
 fi
 
 apps_raw=""

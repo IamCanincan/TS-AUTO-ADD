@@ -28,8 +28,7 @@ do_sync() {
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
         chmod 640 "$TAA_SYS_FILE"
         chown root:root "$TAA_SYS_FILE" 2>/dev/null
-        chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || \
-        chcon u:object_r:adb_data_file:s0 "$TAA_SYS_FILE" 2>/dev/null || true
+        chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
         log_info "taa_sys.txt 已创建（缺失）"
     fi
 
@@ -112,40 +111,25 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# 监控 taa_sys.txt（增强日志版本）
+# 监控 taa_sys.txt（采用已验证的工作循环）
 start_monitor_sys() {
     (
-        log_info "start_monitor_sys 函数开始执行 (PID: $$)"
-        
-        # 确保文件存在
-        if [ ! -f "$TAA_SYS_FILE" ]; then
-            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-            chmod 640 "$TAA_SYS_FILE"
-            chown root:root "$TAA_SYS_FILE" 2>/dev/null
-            chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || \
-            chcon u:object_r:adb_data_file:s0 "$TAA_SYS_FILE" 2>/dev/null || true
-            log_info "taa_sys.txt 已创建（初始）"
-            dispatch_sync
-        fi
-
-        log_info "尝试文件监听: $TAA_SYS_FILE (掩码 wc)"
-        # 将错误输出同时记录到日志文件
-        inotifyd - "$TAA_SYS_FILE:wc" 2>>"$LOG_FILE" | while read -r _; do
-            log_info "检测到 taa_sys.txt 变化（文件监听）"
-            dispatch_sync
-        done
-        log_warn "文件监听进程已退出，将切换到目录监听模式"
-
-        # 降级为目录监听
-        log_info "切换到目录监听: /data/adb/tricky_store/"
         while true; do
-            inotifyd - "/data/adb/tricky_store/:wc" 2>>"$LOG_FILE" | while read -r path event; do
-                if [ "$path" = "taa_sys.txt" ]; then
-                    log_info "检测到 taa_sys.txt 变化（目录监听）"
-                    dispatch_sync
-                fi
+            # 确保文件存在且上下文正确
+            [ -f "$TAA_SYS_FILE" ] || {
+                printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                chmod 640 "$TAA_SYS_FILE"
+                chown root:root "$TAA_SYS_FILE" 2>/dev/null
+                chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
+                log_info "taa_sys.txt 已创建（初始）"
+                dispatch_sync
+            }
+            # 启动 inotifyd 监听，错误输出重定向到日志
+            inotifyd - "$TAA_SYS_FILE:wc" 2>>"$LOG_FILE" | while read -r _; do
+                log_info "检测到 taa_sys.txt 变化"
+                dispatch_sync
             done
-            log_warn "目录监听进程退出，2秒后重启"
+            log_warn "taa_sys.txt 监听进程退出，2秒后重启"
             sleep 2
         done
     ) &
