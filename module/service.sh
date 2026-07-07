@@ -1,6 +1,7 @@
 #!/system/bin/sh
 #=============================================================================
 # service.sh - 后台守护服务
+# 功能：监听应用列表和白名单文件变化，自动同步 target.txt，定期更新补丁日期
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -8,7 +9,6 @@ PROP_FILE="$MODDIR/module.prop"
 BASE="/data/adb/tricky_store"
 TARGET="$BASE/target.txt"
 WATCH_FILE="/data/system/packages.list"
-TAA_SYS_FILE="$BASE/taa_sys.txt"
 
 TMP="${BASE}/.ts_tmp"
 PENDING="${BASE}/.ts_pending"
@@ -19,7 +19,6 @@ PATCH_CACHE_FILE="$BASE/.last_month"
 MAIN_PID_FILE="${BASE}/.ts_daemon_main.pid"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
-
 . "$MODDIR/common.sh" || { logger -t TS-AUTO -p err "无法加载 common.sh"; exit 1; }
 
 log_info() { logger -t TS-AUTO -p info "$*"; }
@@ -29,6 +28,7 @@ log_err()  { logger -t TS-AUTO -p err "$*"; }
 # ---------- 同步核心 ----------
 do_sync() {
     mkdir -p "$BASE"
+    mkdir -p "$(dirname "$TAA_SYS_FILE")"
     if [ ! -f "$TAA_SYS_FILE" ]; then
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
         chmod 644 "$TAA_SYS_FILE"
@@ -48,14 +48,12 @@ do_sync() {
         if ! cmp -s "$TMP" "$TARGET"; then
             mv -f "$TMP" "$TARGET"
             chmod 644 "$TARGET"
-            log_info "target.txt 已更新，行数: $(wc -l < "$TARGET")"
+            log_info "target.txt 已同步刷新，行数: $(wc -l < "$TARGET")"
         else
             rm -f "$TMP"
-            log_info "target.txt 内容无变化，跳过写入"
         fi
     else
         rm -f "$TMP"
-        log_warn "同步结果为空（可能包管理器异常）"
     fi
     
     update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
@@ -64,6 +62,7 @@ do_sync() {
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
+    # 合并短时间内的多次触发，延迟 0.1 秒
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
         sleep 0.1
@@ -90,7 +89,7 @@ dispatch_sync
 
 # ---------- 守护线程 ----------
 
-# 补丁定时更新 (12小时)
+# 补丁定时更新（每 12 小时）
 (
     while true; do
         update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0
@@ -99,7 +98,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# 监控 packages.list（文件监控）
+# 监控 packages.list（使用 inotify）
 start_monitor_pkg() {
     (
         while true; do
@@ -115,31 +114,28 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# ---------- 监控 taa_sys.txt（文件监控 + 自恢复） ----------
+# 监控 taa_sys.txt（新路径位于内部存储，支持 inotify）
 start_monitor_sys() {
     (
         while true; do
-            # 确保文件存在
+            mkdir -p "$(dirname "$TAA_SYS_FILE")"
             if [ ! -f "$TAA_SYS_FILE" ]; then
                 printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
                 chmod 644 "$TAA_SYS_FILE"
                 log_info "taa_sys.txt 初始创建"
                 dispatch_sync
             fi
-
-            # 监控文件（与 packages.list 相同方式）
+            
             inotifyd - "$TAA_SYS_FILE:wyc" 2>/dev/null | while read -r event; do
-                log_info "taa_sys.txt 事件: $event"
+                log_info "taa_sys.txt 事件触发: $event"
                 if [ ! -f "$TAA_SYS_FILE" ]; then
                     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
                     chmod 644 "$TAA_SYS_FILE"
                     log_info "taa_sys.txt 已重建"
                 fi
                 dispatch_sync
-                # 退出当前 inotifyd，外层循环重启，确保监控持续
-                break
             done
-            sleep 1
+            sleep 2
         done
     ) &
     echo $!
@@ -149,7 +145,7 @@ MONITOR2_PID=$(start_monitor_sys)
 echo $$ > "$MAIN_PID_FILE"
 trap 'kill $PATCH_PID $MONITOR1_PID $MONITOR2_PID 2>/dev/null; rm -f "$MAIN_PID_FILE"; exit' INT TERM
 
-# 心跳检测（每5分钟）
+# 心跳检测（每 5 分钟）
 while true; do
     sleep 300
     if ! kill -0 $PATCH_PID 2>/dev/null; then

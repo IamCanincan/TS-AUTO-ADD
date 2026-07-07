@@ -1,11 +1,11 @@
 #!/system/bin/sh
 #=============================================================================
-# common.sh - 公共原子函数库
-# 优化策略：控制网络边界超时、精简 shell 中的 fork() 外部进程调用
+# 公共函数库
+# 提供锁、日期处理、网络补丁获取和模块状态更新功能
 #=============================================================================
 
-# [锁机制] 基于文件系统 mkdir 调用的原子性（Atomic）实现轻量级互斥
-# 超时降低至 15 秒，客观上加速了并发时的状态释放，避免长时间持锁引发死锁
+# ---------- 锁 ----------
+# 使用 mkdir 创建目录作为原子锁，超时 15 秒后强制清理
 acquire_lock() {
     local lock_dir="$1"
     local timeout=15 
@@ -17,7 +17,7 @@ acquire_lock() {
         sleep 1
         waited=$((waited + 1))
     done
-    echo " [警告] 锁获取超时，强行接管..." >&2
+    echo " [警告] 锁获取超时，强制清理残留锁..." >&2
     rmdir "$lock_dir" 2>/dev/null
     mkdir "$lock_dir" 2>/dev/null || return 1
     return 0
@@ -27,24 +27,26 @@ release_lock() {
     rmdir "$1" 2>/dev/null
 }
 
+# ---------- 日期处理 ----------
+# 从输入中提取 YYYY-MM-DD 格式日期
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
 
-# [Tricky Store 规约] 强刷安全补丁为每月 5 号以满足某些特异性 TEE 验证规则
+# 将日期中的 -01 日转换为 -05 日（Tricky Store 规约）
 force_to_05() {
     local in_date="$1"
     [ -n "$in_date" ] || return
     case "$in_date" in *-01) echo "${in_date%-01}-05" ;; *) echo "$in_date" ;; esac
 }
 
+# 获取系统安全补丁日期并转换为 -05 日
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }
 
-# [网络安全边界] 
-# [客观风险] 无网环境或受限网络下，curl/wget 会长时间阻塞并持有 TCP 状态，导致系统无线电及 CPU 无法深睡眠
-# [优化行为] 将连接超时强限制在 3 秒，传输限时 6 秒，一旦失败立刻释放网络套接字，防止耗电
+# ---------- 网络获取补丁日期 ----------
+# 从 AOSP 公告页面获取最新补丁日期，连接超时 3 秒，传输超时 6 秒
 fetch_online_date() {
     local url="$1" html="" patch=""
     local user_agent="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
@@ -57,12 +59,11 @@ fetch_online_date() {
         return 1
     fi
     
-    # 纯文本解析过滤
     patch=$(echo "$html" | sed -n 's/.*<td>\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)<\/td>.*/\1/p' | head -n1)
     [ -n "$patch" ] && echo "$patch" || return 1
 }
 
-# 比较时间戳：客观去除 '-' 符号转化为纯整数，利用 Shell 内建的原生算术比对代替调用外部 expr 命令
+# 比较两个日期，返回较新的日期（字符串比较）
 pick_newer() {
     local d1="$1" d2="$2"
     [ -z "$d1" ] && { echo "$d2"; return; }
@@ -70,6 +71,8 @@ pick_newer() {
     [ "$(echo "$d1" | tr -d '-')" -ge "$(echo "$d2" | tr -d '-')" ] && echo "$d1" || echo "$d2"
 }
 
+# ---------- 更新模块描述 ----------
+# 更新 module.prop 中的 description 字段，显示当前应用数和补丁日期
 update_module_status() {
     local prop_file="$1" base_dir="$2" patch_config="$3"
     [ -f "$prop_file" ] || return 0
@@ -83,13 +86,15 @@ update_module_status() {
     sed -i "s@^description=.*@description=${status_text}@" "$prop_file" 2>/dev/null
 }
 
+# ---------- 安全补丁更新核心逻辑 ----------
+# 参数：$1 = BASE_DIR, $2 = PATCH_CONFIG_FILE, $3 = PATCH_CACHE_FILE, $4 = PROP_FILE, $5 = FORCE_MODE (0/1)
 update_security_patch_core() {
     local base_dir="$1" patch_config="$2" cache_file="$3" prop_file="$4" force_mode="${5:-0}"
     local system_date=$(get_system_date)
     [ -z "$system_date" ] && return 1
     local sys_ym="${system_date%-*}"
 
-    # [缓存控制机制] 当本地保存的月份与当前系统月份一致且非强刷模式时，不触发网络请求，零网络开销
+    # 若缓存月份与当前月份一致且非强制模式，则不发起网络请求
     local need_online=0
     if [ -f "$cache_file" ] && [ "$force_mode" -eq 0 ]; then
         [ "$(cat "$cache_file")" != "$sys_ym" ] && need_online=1
@@ -117,7 +122,7 @@ update_security_patch_core() {
         fi
     fi
 
-    # [I/O 隔离] 写入 .tmp 临时文件再通过 mv 替换原始目标，利用 POSIX 标准的覆盖原子性防止配置在写一半时由于断电引发损坏
+    # 写入配置文件（先写临时文件再 mv 以保证原子性）
     echo -e "system=$final_date\nboot=$final_date\nvendor=$final_date" > "${patch_config}.tmp"
     chmod 644 "${patch_config}.tmp"
     mv -f "${patch_config}.tmp" "$patch_config"

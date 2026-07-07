@@ -52,6 +52,10 @@ fi
 ui_print " "
 ui_print "[5/6] 执行首次应用列表同步"
 
+# 定义新路径（与 common.sh 一致）
+TAA_SYS_FILE="/storage/emulated/0/Documents/taa_sys.txt"
+mkdir -p "$(dirname "$TAA_SYS_FILE")"
+
 # 获取第三方应用包名（优先 cmd，降级 pm）
 apps_raw=""
 if command -v cmd >/dev/null 2>&1; then
@@ -61,7 +65,6 @@ if [ -z "$apps_raw" ] && command -v pm >/dev/null 2>&1; then
     apps_raw=$(pm list packages -3 2>/dev/null)
 fi
 
-TAA_SYS_FILE="$BASE_DIR/taa_sys.txt"
 if [ ! -f "$TAA_SYS_FILE" ]; then
     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
     chmod 644 "$TAA_SYS_FILE"

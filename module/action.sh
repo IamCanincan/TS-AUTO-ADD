@@ -1,6 +1,7 @@
 #!/system/bin/sh
 #=============================================================================
 # action.sh - 手动同步工具
+# 功能：执行一次完整的应用列表同步和补丁日期更新
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -12,7 +13,6 @@ PATCH_CACHE_FILE="$BASE/.last_month"
 TMP="$BASE/.ts_tmp"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
-
 . "$MODDIR/common.sh" || { echo " [错误] 无法加载 common.sh" >&2; exit 1; }
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -30,8 +30,7 @@ echo "================================================"
 acquire_lock "$LOCK_DIR" || exit 1
 
 echo "[1/2] 正在提取与合并第三方应用包名..."
-mkdir -p "$BASE"
-TAA_SYS_FILE="$BASE/taa_sys.txt"
+mkdir -p "$(dirname "$TAA_SYS_FILE")"
 if [ ! -f "$TAA_SYS_FILE" ]; then
     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
 fi
