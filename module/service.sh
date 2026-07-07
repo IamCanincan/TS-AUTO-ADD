@@ -63,10 +63,10 @@ do_sync() {
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
-    # 合并短时间内的多次触发，延迟 0.2 秒
+    # 合并短时间内的多次触发，延迟 50 毫秒，平衡实时性与资源消耗
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
-        sleep 0.2
+        sleep 0.05
     done
     do_sync
     release_lock "$LOCK_DIR"
