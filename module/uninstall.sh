@@ -8,7 +8,6 @@
 BASE="/data/adb/tricky_store"
 MAIN_PID_FILE="$BASE/.ts_daemon_main.pid"
 
-# 终止主进程并等待其退出
 if [ -f "$MAIN_PID_FILE" ]; then
     pid=$(cat "$MAIN_PID_FILE" 2>/dev/null)
     if [ -n "$pid" ]; then
@@ -22,7 +21,6 @@ if [ -f "$MAIN_PID_FILE" ]; then
     rm -f "$MAIN_PID_FILE"
 fi
 
-# 清理旧版本可能遗留的 PID 文件
 for item in b1 b2 patch; do
     PID_FILE="$BASE/.ts_daemon_${item}.pid"
     if [ -f "$PID_FILE" ]; then
@@ -32,14 +30,13 @@ for item in b1 b2 patch; do
     fi
 done
 
-# 删除本模块使用的锁、临时文件和缓存
 rm -rf "$BASE/.ts_lock" "$BASE/.ts_pending" "$BASE/.ts_tmp"
 rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak"
 
-# 删除本模块专属的白名单配置文件（由本模块生成并维护）
+# 删除 taa_sys.txt（如果存在）
+rm -f "/data/local/tmp/taa_sys.txt"
 rm -f "$BASE/taa_sys.txt"
 
-# 删除本模块安装的属性注入脚本
 rm -f "/data/adb/service.d/taa_resetprop.sh"
 
 exit 0
