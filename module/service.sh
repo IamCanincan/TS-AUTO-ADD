@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 事件驱动型后台守护服务 (无轮询防抖架构)
+# service.sh - 纯事件驱动后台守护
 #=============================================================================
 
 MODDIR="${0%/*}"
@@ -20,15 +20,15 @@ PIDS_FILE="${BASE}/.ts_daemon_pids.list"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/common.sh" || exit 1
 
-# ---------- 环境预检 ----------
-INOTIFY_CMD=""
-for cmd in "/data/adb/magisk/busybox inotifyd" "/data/adb/ksu/bin/busybox inotifyd" "inotifyd" "/system/bin/inotifyd"; do
-    if command -v ${cmd%% *} >/dev/null 2>&1; then
-        INOTIFY_CMD="$cmd"
-        break
-    fi
-done
-[ -z "$INOTIFY_CMD" ] && { log_err "未找到在用的 inotifyd"; exit 1; }
+# ---------- 强制检测 inotify ----------
+INOTIFY_INFO=$(find_inotify_cmd)
+if [ -z "$INOTIFY_INFO" ]; then
+    log_err "未找到 inotify 工具，该设备不支持事件驱动，服务退出。"
+    exit 1
+fi
+INOTIFY_MODE="${INOTIFY_INFO%%:*}"
+INOTIFY_CMD="${INOTIFY_INFO#*:}"
+log_info "使用 inotify 工具: ${INOTIFY_CMD%% *} (模式: $INOTIFY_MODE)"
 
 # ---------- 同步核心逻辑 ----------
 do_sync() {
@@ -55,17 +55,20 @@ do_sync() {
     else
         rm -f "$TMP" 2>/dev/null
     fi
-    update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
+    
+    local app_count=$(wc -l < "$TARGET" 2>/dev/null || echo 0)
+    local patch_date="未知"
+    [ -f "$PATCH_CONFIG_FILE" ] && patch_date=$(grep '^boot=' "$PATCH_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
+    [ -z "$patch_date" ] && patch_date="未配置"
+    update_module_prop "$PROP_FILE" "[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]"
 }
 
-# 彻底摒弃 sleep 轮询，采用基于目录原子锁的非阻塞防抖 (Debounce)
+# 防抖调度 (窗口 2 秒)
 dispatch_sync() {
     if mkdir "$DEBOUNCE_LOCK" 2>/dev/null; then
         (
-            # 窗口期内若再次触发，外层 mkdir 会直接跳过，从而实现批处理
-            sleep 3 
+            sleep 2
             rmdir "$DEBOUNCE_LOCK" 2>/dev/null
-            
             acquire_lock "$LOCK_DIR" || exit 1
             do_sync
             release_lock "$LOCK_DIR"
@@ -82,49 +85,80 @@ if [ -f "$PIDS_FILE" ]; then
 fi
 rm -rf "$TMP" "$LOCK_DIR" "$DEBOUNCE_LOCK" 2>/dev/null
 
-# 阻塞等待直至系统完全启动
+# 等待系统启动完成
 until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
 
 log_info "系统启动完毕，触发首次同步"
 dispatch_sync
 
-# ---------- 守护进程下发 (自愈式沙盒) ----------
-# Magisk规范要求service.sh本体不应长时间阻塞。下发各监控任务至后台后主脚本退出。
-
-# 任务1: 安全补丁自动更新 (独立休眠循环)
+# ---------- 守护进程下发 ----------
+# 任务1: 安全补丁自动更新 (6小时周期，非文件轮询)
 (
     while true; do
-        update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0
-        sleep 43200
+        if is_network_available; then
+            update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0
+            sleep 21600
+        else
+            log_info "网络不可用，补丁更新推迟至12小时后"
+            sleep 43200
+        fi
     done
 ) &
 echo $! >> "$PIDS_FILE"
 
-# 任务2: 目录级 packages.list 监控
+# 监控函数 (inotifywait)
+start_inotifywait_monitor() {
+    local cmd="$1"
+    local watch_path="$2"
+    $cmd -m -e modify -e create -e delete "$watch_path" 2>/dev/null | while read -r line; do
+        case "$line" in
+            *packages.list*) dispatch_sync ;;
+        esac
+    done
+}
+
+# 监控函数 (inotifyd)
+start_inotifyd_monitor() {
+    local cmd="$1"
+    local watch_path="$2"
+    $cmd - "$watch_path:wc" 2>/dev/null | while read -r event file; do
+        case "$file" in
+            *packages.list*) dispatch_sync ;;
+        esac
+    done
+}
+
+# 任务2: 监控 /data/system 目录 (捕获 packages.list 变更)
 (
     while true; do
         [ -d "$WATCH_DIR" ] || { sleep 5; continue; }
-        $INOTIFY_CMD - "$WATCH_DIR:wc" 2>/dev/null | while read -r line; do
-            case "$line" in
-                *packages.list*) dispatch_sync ;;
-            esac
-        done
-        sleep 3 # 如果因系统异常导致管道断开，延迟重启，代替外部轮询守护
+        if [ "$INOTIFY_MODE" = "inotifywait" ]; then
+            start_inotifywait_monitor "$INOTIFY_CMD" "$WATCH_DIR"
+        else
+            start_inotifyd_monitor "$INOTIFY_CMD" "$WATCH_DIR"
+        fi
+        sleep 3  # 仅用于子进程意外退出后的自愈重启，非轮询检测
     done
 ) &
 echo $! >> "$PIDS_FILE"
 
-# 任务3: taa_sys.txt 白名单文件监控
+# 任务3: 监控 taa_sys.txt 文件
 (
     while true; do
         ensure_taa_sys "$TAA_SYS_FILE"
-        $INOTIFY_CMD - "$TAA_SYS_FILE:wc" 2>/dev/null | while read -r line; do
-            dispatch_sync
-        done
-        sleep 3
+        if [ "$INOTIFY_MODE" = "inotifywait" ]; then
+            $INOTIFY_CMD -m -e modify -e create -e delete "$TAA_SYS_FILE" 2>/dev/null | while read -r line; do
+                dispatch_sync
+            done
+        else
+            $INOTIFY_CMD - "$TAA_SYS_FILE:wc" 2>/dev/null | while read -r line; do
+                dispatch_sync
+            done
+        fi
+        sleep 3  # 自愈重启
     done
 ) &
 echo $! >> "$PIDS_FILE"
 
-log_info "事件驱动守护程序组下发完毕，主引导退出。"
+log_info "事件驱动守护进程组下发完毕，主进程退出。"
 exit 0

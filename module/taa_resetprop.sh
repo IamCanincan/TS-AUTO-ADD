@@ -1,8 +1,13 @@
 #!/system/bin/sh
 #====================================================
 # 系统属性注入脚本
-# 功能：检查并设置系统属性以模拟 locked 状态
 #====================================================
+
+# 检查 resetprop 命令是否存在
+if ! command -v resetprop >/dev/null 2>&1; then
+    echo "resetprop not found, skip"
+    exit 0
+fi
 
 check_reset_prop() {
   local NAME="$1" EXPECTED="$2"

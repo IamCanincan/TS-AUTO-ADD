@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #====================================================
-# 卸载清理脚本
+# 卸载清理脚本 (优化版)
 #====================================================
 
 BASE="/data/adb/tricky_store"
@@ -18,9 +18,9 @@ if [ -f "$PIDS_FILE" ]; then
     rm -f "$PIDS_FILE" 2>/dev/null
 fi
 
-# 双重保险：清理残留的在用 inotifyd 进程
+# 双重保险：清理残留的 inotify 进程
 pkill -f "inotifyd.*$BASE" 2>/dev/null
-pkill -f "inotifyd.*taa_sys.txt" 2>/dev/null
+pkill -f "inotifywait.*$BASE" 2>/dev/null
 
 # 清理所有临时工作锁和遗留缓存
 rm -rf "$BASE/.ts_lock" "$BASE/.ts_debounce" "$BASE/.ts_tmp" 2>/dev/null

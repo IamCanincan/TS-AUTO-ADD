@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# 公共函数库
+# 公共函数库 (纯事件驱动版)
 #=============================================================================
 
 TAA_SYS_FILE="/data/adb/tricky_store/taa_sys.txt"
@@ -73,6 +73,8 @@ fetch_online_date() {
     local user_agent="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
     local html="" patch=""
     
+    is_network_available || return 1
+
     if command -v curl >/dev/null 2>&1; then
         html=$(curl --connect-timeout 3 -m 6 -Ls -A "$user_agent" "$url" 2>/dev/null) || return 1
     elif command -v wget >/dev/null 2>&1; then
@@ -91,19 +93,51 @@ pick_newer() {
     [ "$(echo "$d1" | tr -d '-')" -ge "$(echo "$d2" | tr -d '-')" ] && echo "$d1" || echo "$d2"
 }
 
-update_module_status() {
-    local prop_file="$1" base_dir="$2" patch_config="$3"
-    [ -f "$prop_file" ] || return 0
-    local app_count=0
-    [ -f "$base_dir/target.txt" ] && app_count=$(wc -l < "$base_dir/target.txt" 2>/dev/null || echo 0)
-    local patch_date="未配置"
-    [ -f "$patch_config" ] && patch_date=$(grep '^boot=' "$patch_config" 2>/dev/null | cut -d'=' -f2)
-    [ -z "$patch_date" ] && patch_date="未知"
-    
-    # 动态路径兼容：防止跨界替换导致状态无法刷新
-    sed -i "s/^description=.*/description=[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]/" "$prop_file" 2>/dev/null || true
+# ---------- 安全替换 module.prop ----------
+update_module_prop() {
+    local prop_file="$1" new_desc="$2"
+    [ -f "$prop_file" ] || return 1
+    local tmp_file="${prop_file}.tmp.$$"
+    sed "s/^description=.*/description=$new_desc/" "$prop_file" > "$tmp_file" 2>/dev/null && {
+        cat "$tmp_file" > "$prop_file"
+        rm -f "$tmp_file"
+        return 0
+    }
+    rm -f "$tmp_file"
+    return 1
 }
 
+# ---------- 网络检测 ----------
+is_network_available() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 && return 0
+    grep -q '^default' /proc/net/route 2>/dev/null && return 0
+    return 1
+}
+
+# ---------- 动态查找 inotify 工具 (无轮询降级) ----------
+find_inotify_cmd() {
+    # 优先 inotifywait
+    for cmd in "inotifywait" "/data/adb/magisk/busybox inotifywait" "/data/adb/ksu/bin/busybox inotifywait"; do
+        if command -v ${cmd%% *} >/dev/null 2>&1; then
+            if ${cmd%% *} --help 2>&1 | grep -q -e '-m' -e '--monitor'; then
+                echo "inotifywait:${cmd}"
+                return 0
+            fi
+        fi
+    done
+    # 降级 inotifyd
+    for cmd in "inotifyd" "/data/adb/magisk/busybox inotifyd" "/data/adb/ksu/bin/busybox inotifyd"; do
+        if command -v ${cmd%% *} >/dev/null 2>&1; then
+            if ${cmd%% *} --help 2>&1 | grep -q 'inotifyd'; then
+                echo "inotifyd:${cmd}"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# ---------- 更新安全补丁核心 ----------
 update_security_patch_core() {
     local base_dir="$1" patch_config="$2" cache_file="$3" prop_file="$4" force_mode="${5:-0}"
     local system_date=$(get_system_date)
@@ -145,6 +179,11 @@ update_security_patch_core() {
     
     chmod 644 "${patch_config}.tmp" 2>/dev/null
     mv -f "${patch_config}.tmp" "$patch_config" 2>/dev/null || return 1
-    update_module_status "$prop_file" "$base_dir" "$patch_config"
+
+    local app_count=0
+    [ -f "$base_dir/target.txt" ] && app_count=$(wc -l < "$base_dir/target.txt" 2>/dev/null || echo 0)
+    local patch_date="$final_date"
+    local new_desc="[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]"
+    update_module_prop "$prop_file" "$new_desc"
     return 0
 }
