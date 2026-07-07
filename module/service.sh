@@ -20,7 +20,7 @@ MAIN_PID_FILE="${BASE}/.ts_daemon_main.pid"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/common.sh" || { logger -t TS-AUTO -p err "无法加载 common.sh"; exit 1; }
 
-# ---------- 查找可用的 inotifyd ----------
+# ---------- 查找 inotifyd ----------
 INOTIFY_CMD=""
 for cmd in inotifyd /system/bin/inotifyd /data/adb/ksu/bin/busybox /data/adb/magisk/busybox; do
     if command -v "$cmd" >/dev/null 2>&1; then
@@ -111,14 +111,16 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# 监控 packages.list（改为监控 /data/system 目录，过滤文件名）
+# 监控 packages.list（使用目录监听，兼容不同输出格式）
 (
+    log_info "开始监听目录 $WATCH_DIR 中的 packages.list"
     while true; do
         [ -d "$WATCH_DIR" ] || { sleep 5; continue; }
-        $INOTIFY_CMD - "$WATCH_DIR:wc" 2>/dev/null | while read -r path event; do
-            case "$path" in
-                "packages.list")
-                    log_info "检测到 packages.list 变化"
+        $INOTIFY_CMD - "$WATCH_DIR:wc" 2>/dev/null | while read -r line; do
+            # 兼容不同 busybox 输出格式：只要行中包含 "packages.list" 就触发
+            case "$line" in
+                *packages.list*)
+                    log_info "检测到 packages.list 变化 (事件: $line)"
                     dispatch_sync
                     ;;
             esac
@@ -129,8 +131,9 @@ PATCH_PID=$!
 ) &
 MONITOR1_PID=$!
 
-# 监控 taa_sys.txt（直接文件监听）
+# 监控 taa_sys.txt（文件监听）
 (
+    log_info "开始监听文件 $TAA_SYS_FILE"
     while true; do
         [ -f "$TAA_SYS_FILE" ] || {
             printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
@@ -152,7 +155,7 @@ MONITOR2_PID=$!
 
 # 记录主进程 PID
 echo $$ > "$MAIN_PID_FILE" 2>/dev/null
-log_info "主守护进程已启动，PID: $$, MONITOR2_PID: $MONITOR2_PID"
+log_info "主守护进程已启动，PID: $$, MONITOR1_PID: $MONITOR1_PID, MONITOR2_PID: $MONITOR2_PID"
 
 cleanup() {
     log_info "收到终止信号，清理子进程"
@@ -162,7 +165,7 @@ cleanup() {
 }
 trap 'cleanup' INT TERM QUIT
 
-# 心跳检测（每 5 分钟），监控子进程状态并自动重启
+# 心跳检测（每 5 分钟）
 while true; do
     sleep 300
     if ! kill -0 $PATCH_PID 2>/dev/null; then
@@ -178,12 +181,13 @@ while true; do
     if ! kill -0 $MONITOR1_PID 2>/dev/null; then
         log_warn "监控1 (packages.list) 重启"
         (
+            log_info "重启监听目录 $WATCH_DIR"
             while true; do
                 [ -d "$WATCH_DIR" ] || { sleep 5; continue; }
-                $INOTIFY_CMD - "$WATCH_DIR:wc" 2>/dev/null | while read -r path event; do
-                    case "$path" in
-                        "packages.list")
-                            log_info "检测到 packages.list 变化"
+                $INOTIFY_CMD - "$WATCH_DIR:wc" 2>/dev/null | while read -r line; do
+                    case "$line" in
+                        *packages.list*)
+                            log_info "检测到 packages.list 变化 (事件: $line)"
                             dispatch_sync
                             ;;
                     esac
@@ -197,6 +201,7 @@ while true; do
     if ! kill -0 $MONITOR2_PID 2>/dev/null; then
         log_warn "监控2 (taa_sys.txt) 重启"
         (
+            log_info "重启监听文件 $TAA_SYS_FILE"
             while true; do
                 [ -f "$TAA_SYS_FILE" ] || {
                     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
