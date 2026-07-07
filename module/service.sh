@@ -1,13 +1,13 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 后台守护服务（纯 inotifyd 版）
+# service.sh - 后台守护服务
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
 BASE="/data/adb/tricky_store"
 TARGET="$BASE/target.txt"
-WATCH_FILE="/data/system/packages.list"
+WATCH_DIR="/data/system"
 
 TMP="${BASE}/.ts_tmp"
 PENDING="${BASE}/.ts_pending"
@@ -111,21 +111,25 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# 监控 packages.list
+# 监控 packages.list（改为监控 /data/system 目录，过滤文件名）
 (
     while true; do
-        [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
-        $INOTIFY_CMD - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do
-            log_info "检测到 packages.list 变化"
-            dispatch_sync
+        [ -d "$WATCH_DIR" ] || { sleep 5; continue; }
+        $INOTIFY_CMD - "$WATCH_DIR:wc" 2>/dev/null | while read -r path event; do
+            case "$path" in
+                "packages.list")
+                    log_info "检测到 packages.list 变化"
+                    dispatch_sync
+                    ;;
+            esac
         done
-        log_warn "packages.list 监听进程退出，2秒后重启"
+        log_warn "packages.list 目录监听进程退出，2秒后重启"
         sleep 2
     done
 ) &
 MONITOR1_PID=$!
 
-# 监控 taa_sys.txt
+# 监控 taa_sys.txt（直接文件监听）
 (
     while true; do
         [ -f "$TAA_SYS_FILE" ] || {
@@ -175,12 +179,16 @@ while true; do
         log_warn "监控1 (packages.list) 重启"
         (
             while true; do
-                [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
-                $INOTIFY_CMD - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do
-                    log_info "检测到 packages.list 变化"
-                    dispatch_sync
+                [ -d "$WATCH_DIR" ] || { sleep 5; continue; }
+                $INOTIFY_CMD - "$WATCH_DIR:wc" 2>/dev/null | while read -r path event; do
+                    case "$path" in
+                        "packages.list")
+                            log_info "检测到 packages.list 变化"
+                            dispatch_sync
+                            ;;
+                    esac
                 done
-                log_warn "packages.list 监听进程退出，2秒后重启"
+                log_warn "packages.list 目录监听进程退出，2秒后重启"
                 sleep 2
             done
         ) &
