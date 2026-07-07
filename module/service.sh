@@ -1,7 +1,7 @@
 #!/system/bin/sh
 #=============================================================================
 # service.sh - 后台守护服务
-# 监控策略：监听目录事件，无条件触发同步
+# 监控策略：监听目录所有事件，无条件触发同步
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -116,7 +116,7 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# ---------- 监控 taa_sys.txt（监控目录，事件触发即同步） ----------
+# ---------- 监控 taa_sys.txt（监控整个目录，无条件触发） ----------
 start_monitor_sys() {
     (
         while true; do
@@ -128,19 +128,12 @@ start_monitor_sys() {
                 dispatch_sync
             fi
 
-            # 监控整个 BASE 目录，捕获所有文件事件（写入、创建、删除）
+            # 监控整个 BASE 目录，任何事件（写入、创建、删除）都触发同步
             inotifyd - "$BASE:wyc" 2>/dev/null | while read -r event; do
-                # 检查事件是否涉及 taa_sys.txt
-                if echo "$event" | grep -q "taa_sys.txt"; then
-                    log_info "taa_sys.txt 事件触发: $event"
-                    # 若文件被删除则重建
-                    if [ ! -f "$TAA_SYS_FILE" ]; then
-                        printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                        chmod 644 "$TAA_SYS_FILE"
-                        log_info "taa_sys.txt 已重建（事件触发时缺失）"
-                    fi
-                    dispatch_sync
-                fi
+                # 记录事件内容（便于调试）
+                log_info "目录事件触发: $event"
+                # 无需过滤，直接同步
+                dispatch_sync
             done
             sleep 2
         done
