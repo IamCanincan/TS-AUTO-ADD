@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 后台守护服务（稳定版）
+# service.sh - 后台守护服务
 # 功能：监听文件变化并同步 target.txt，定期更新安全补丁日期
 #=============================================================================
 
@@ -63,7 +63,6 @@ do_sync() {
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
-    # 合并短时间内的多次触发，延迟 0.05 秒，避免重复执行，提升稳定性
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
         sleep 0.05
@@ -82,7 +81,7 @@ for pid_file in "$BASE/.ts_daemon_b1.pid" "$BASE/.ts_daemon_b2.pid" "$BASE/.ts_p
     fi
 done
 rm -f "$TMP" "$PENDING"
-rm -rf "$LOCK_DIR"   # 强制清理残留锁目录
+rm -rf "$LOCK_DIR"
 
 # 等待系统启动完成
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
@@ -119,40 +118,47 @@ start_monitor() {
 # 监控 packages.list 变化
 MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
 
-# ---------- 监控 taa_sys.txt 变更（稳定版：inotify + mtime 校验 + 重建保护） ----------
+# ---------- 监控 taa_sys.txt 变更（事件触发 + mtime 校验，不依赖事件内容） ----------
 (
     TAA_SYS_FILE="$BASE/taa_sys.txt"
-    LAST_MTIME=""
-    # 初始化记录当前 mtime（若文件存在）
+    # 初始化 mtime（若文件存在）
     if [ -f "$TAA_SYS_FILE" ]; then
         LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+    else
+        LAST_MTIME=""
     fi
 
     while true; do
-        # 监控目录事件（写入、创建、删除），并读取事件行
-        inotifyd - "$BASE:wyc" 2>/dev/null | while read -r line; do
-            # 检查事件是否涉及 taa_sys.txt
-            if echo "$line" | grep -q "taa_sys.txt"; then
-                # 文件存在，比较 mtime
-                if [ -f "$TAA_SYS_FILE" ]; then
-                    CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
-                    # 若 stat 获取失败（如不支持 -c），则按事件触发同步（保守策略）
-                    if [ -z "$CURRENT_MTIME" ] || [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
+        # 监控整个 BASE 目录，任何文件变化（写入、创建、删除）都会触发
+        inotifyd - "$BASE:wyc" 2>/dev/null | while read -r _; do
+            # 每次目录事件，检查目标文件是否发生变化
+            if [ -f "$TAA_SYS_FILE" ]; then
+                # 获取当前 mtime
+                CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                # 若 stat 获取成功且 mtime 变化，或 stat 失败（保守策略触发同步），则执行同步
+                if [ -n "$CURRENT_MTIME" ]; then
+                    if [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
                         LAST_MTIME="$CURRENT_MTIME"
-                        log_info "taa_sys.txt 变化 (mtime 校验)，触发同步"
+                        log_info "taa_sys.txt 修改时间变化，触发同步"
                         dispatch_sync
                     fi
                 else
-                    # 文件被删除，立即重建默认内容并触发同步
-                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                    chmod 644 "$TAA_SYS_FILE"
-                    LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
-                    log_info "taa_sys.txt 已重建，触发同步"
+                    # stat 不支持，视为已变化，触发同步（保守）
+                    log_info "stat 不支持，事件触发同步（保守策略）"
                     dispatch_sync
+                    # 更新 LAST_MTIME 防止重复触发（但无法获取真实时间，可用当前时间）
+                    LAST_MTIME=$(date +%s)
                 fi
+            else
+                # 文件不存在，重建并同步
+                printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                chmod 644 "$TAA_SYS_FILE"
+                LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                log_info "taa_sys.txt 已重建，触发同步"
+                dispatch_sync
             fi
         done
-        # 若 inotifyd 异常退出，短暂等待后重启循环
+        # 若 inotifyd 异常退出，短暂等待后重启
         sleep 2
     done
 ) &
@@ -163,52 +169,53 @@ echo $$ > "$MAIN_PID_FILE"
 # 主进程健康监管
 trap 'log_info "收到退出信号，终止子进程"; kill $PATCH_PID $MONITOR1_PID $MONITOR2_PID 2>/dev/null; rm -f "$MAIN_PID_FILE"; exit' INT TERM
 
-# 子进程重启计数器
 restart_count=0
 max_restart=5
-reset_interval=600  # 10分钟内超过5次则进入冷静期
+reset_interval=600
 
 while true; do
     sleep 60
-    # 补丁进程
     if ! kill -0 $PATCH_PID 2>/dev/null; then
         log_warn "补丁进程重启 (计数 $restart_count)"
         ( while true; do update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0; sleep 43200; done ) &
         PATCH_PID=$!
         restart_count=$((restart_count + 1))
     fi
-    # 监控1
     if ! kill -0 $MONITOR1_PID 2>/dev/null; then
         log_warn "监控1 (packages.list) 重启 (计数 $restart_count)"
         MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
         restart_count=$((restart_count + 1))
     fi
-    # 监控2
     if ! kill -0 $MONITOR2_PID 2>/dev/null; then
         log_warn "监控2 (taa_sys.txt) 重启 (计数 $restart_count)"
         (
             TAA_SYS_FILE="$BASE/taa_sys.txt"
-            LAST_MTIME=""
             if [ -f "$TAA_SYS_FILE" ]; then
                 LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+            else
+                LAST_MTIME=""
             fi
             while true; do
-                inotifyd - "$BASE:wyc" 2>/dev/null | while read -r line; do
-                    if echo "$line" | grep -q "taa_sys.txt"; then
-                        if [ -f "$TAA_SYS_FILE" ]; then
-                            CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
-                            if [ -z "$CURRENT_MTIME" ] || [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
+                inotifyd - "$BASE:wyc" 2>/dev/null | while read -r _; do
+                    if [ -f "$TAA_SYS_FILE" ]; then
+                        CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                        if [ -n "$CURRENT_MTIME" ]; then
+                            if [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
                                 LAST_MTIME="$CURRENT_MTIME"
-                                log_info "taa_sys.txt 变化 (mtime 校验)，触发同步"
+                                log_info "taa_sys.txt 修改时间变化，触发同步"
                                 dispatch_sync
                             fi
                         else
-                            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                            chmod 644 "$TAA_SYS_FILE"
-                            LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
-                            log_info "taa_sys.txt 已重建，触发同步"
+                            log_info "stat 不支持，事件触发同步（保守策略）"
                             dispatch_sync
+                            LAST_MTIME=$(date +%s)
                         fi
+                    else
+                        printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                        chmod 644 "$TAA_SYS_FILE"
+                        LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                        log_info "taa_sys.txt 已重建，触发同步"
+                        dispatch_sync
                     fi
                 done
                 sleep 2
@@ -218,7 +225,6 @@ while true; do
         restart_count=$((restart_count + 1))
     fi
 
-    # 若重启过于频繁，进入冷静期
     if [ $restart_count -ge $max_restart ]; then
         log_warn "子进程频繁重启，进入冷静期 10 分钟"
         sleep $reset_interval
