@@ -30,8 +30,8 @@ acquire_lock "$LOCK_DIR" || exit 1
 
 echo "[1/2] 正在提取与合并第三方应用包名..."
 if [ ! -f "$TAA_SYS_FILE" ]; then
-    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-    chmod 640 "$TAA_SYS_FILE"
+    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
+    chmod 640 "$TAA_SYS_FILE" 2>/dev/null
     chown root:root "$TAA_SYS_FILE" 2>/dev/null
     chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
 fi
@@ -42,25 +42,25 @@ apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list pac
     cat "$TAA_SYS_FILE" 2>/dev/null
     echo ""
     echo "$apps_raw" | sed -n 's/^package://p'
-} | sort -u | sed '/^$/d' > "$TMP"
+} | sort -u | sed '/^$/d' > "$TMP" 2>/dev/null
 
 if [ -s "$TMP" ]; then
-    if ! cmp -s "$TMP" "$BASE/target.txt"; then
-        mv -f "$TMP" "$BASE/target.txt"
-        chmod 644 "$BASE/target.txt"
-        echo " [✓] target.txt 同步成功，当前有效行数: $(wc -l < "$BASE/target.txt")"
+    if ! cmp -s "$TMP" "$BASE/target.txt" 2>/dev/null; then
+        mv -f "$TMP" "$BASE/target.txt" 2>/dev/null
+        chmod 644 "$BASE/target.txt" 2>/dev/null
+        echo " [✓] target.txt 同步成功，当前有效行数: $(wc -l < "$BASE/target.txt" 2>/dev/null || echo 0)"
     else
-        rm -f "$TMP"
+        rm -f "$TMP" 2>/dev/null
         echo " [i] 内容与现有配置一致，无需写入。"
     fi
 else
-    rm -f "$TMP"
+    rm -f "$TMP" 2>/dev/null
     echo " [✗] 严重错误：未能获取本地包名列表！"
 fi
 
 echo ""
 echo "[2/2] 正在检测并刷新安全补丁配置..."
-update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" "$FORCE_MODE"
+update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" "$FORCE_MODE" || echo " [警告] 补丁更新可能失败"
 
 release_lock "$LOCK_DIR"
 echo "================================================"

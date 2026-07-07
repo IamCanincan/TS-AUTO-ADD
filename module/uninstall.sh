@@ -16,7 +16,7 @@ if [ -f "$MAIN_PID_FILE" ]; then
         done
         kill -9 "$pid" 2>/dev/null
     fi
-    rm -f "$MAIN_PID_FILE"
+    rm -f "$MAIN_PID_FILE" 2>/dev/null
 fi
 
 for item in b1 b2 patch; do
@@ -24,23 +24,23 @@ for item in b1 b2 patch; do
     if [ -f "$PID_FILE" ]; then
         pid=$(cat "$PID_FILE" 2>/dev/null)
         [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
-        rm -f "$PID_FILE"
+        rm -f "$PID_FILE" 2>/dev/null
     fi
 done
 
-rm -rf "$BASE/.ts_lock" "$BASE/.ts_pending" "$BASE/.ts_tmp"
-rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak"
+# 清理所有可能残留的 inotifyd 进程（针对本模块）
+pkill -f "inotifyd.*$BASE" 2>/dev/null
+
+rm -rf "$BASE/.ts_lock" "$BASE/.ts_pending" "$BASE/.ts_tmp" 2>/dev/null
+rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak" 2>/dev/null
 
 # 删除日志
-rm -f "/data/local/tmp/ts_auto.log"
+rm -f "/data/local/tmp/ts_auto.log" 2>/dev/null
 
-# 删除白名单文件（新路径）
-rm -f "$BASE/taa_sys.txt"
-# 清理旧的可能遗留的目录/文件（旧路径）
-rm -f "/data/system/taa_sys.list"
-rm -rf "/data/system/ts_auto_add"
+# 删除白名单文件
+rm -f "$BASE/taa_sys.txt" 2>/dev/null
 
 # 删除属性注入脚本
-rm -f "/data/adb/service.d/taa_resetprop.sh"
+rm -f "/data/adb/service.d/taa_resetprop.sh" 2>/dev/null
 
 exit 0

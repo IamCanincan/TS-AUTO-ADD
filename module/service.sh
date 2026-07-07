@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 后台守护服务
+# service.sh - 后台守护服务（纯 inotifyd 版）
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -20,13 +20,27 @@ MAIN_PID_FILE="${BASE}/.ts_daemon_main.pid"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/common.sh" || { logger -t TS-AUTO -p err "无法加载 common.sh"; exit 1; }
 
+# ---------- 查找可用的 inotifyd ----------
+INOTIFY_CMD=""
+for cmd in inotifyd /system/bin/inotifyd /data/adb/ksu/bin/busybox /data/adb/magisk/busybox; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+        INOTIFY_CMD="$cmd"
+        break
+    fi
+done
+if [ -z "$INOTIFY_CMD" ]; then
+    log_err "未找到 inotifyd 命令，无法启动文件监听服务"
+    exit 1
+fi
+log_info "使用 inotifyd: $INOTIFY_CMD"
+
 # ---------- 同步核心 ----------
 do_sync() {
     log_info "do_sync 开始执行"
-    mkdir -p "$BASE"
+    mkdir -p "$BASE" 2>/dev/null
     if [ ! -f "$TAA_SYS_FILE" ]; then
-        printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-        chmod 640 "$TAA_SYS_FILE"
+        printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
+        chmod 640 "$TAA_SYS_FILE" 2>/dev/null
         chown root:root "$TAA_SYS_FILE" 2>/dev/null
         chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
         log_info "taa_sys.txt 已创建（缺失）"
@@ -36,32 +50,34 @@ do_sync() {
         cat "$TAA_SYS_FILE" 2>/dev/null
         echo ""
         local apps_raw=""
-        apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null)
-        [ -z "$apps_raw" ] && apps_raw=$(pm list packages -3 2>/dev/null)
+        if command -v cmd >/dev/null 2>&1; then
+            apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null)
+        fi
+        [ -z "$apps_raw" ] && command -v pm >/dev/null 2>&1 && apps_raw=$(pm list packages -3 2>/dev/null)
         echo "$apps_raw" | sed -n 's/^package://p'
-    } | sort -u | sed '/^$/d' > "$TMP"
+    } | sort -u | sed '/^$/d' > "$TMP" 2>/dev/null
     
     if [ -s "$TMP" ]; then
-        if ! cmp -s "$TMP" "$TARGET"; then
-            mv -f "$TMP" "$TARGET"
-            chmod 644 "$TARGET"
-            log_info "target.txt 已同步，行数: $(wc -l < "$TARGET")"
+        if ! cmp -s "$TMP" "$TARGET" 2>/dev/null; then
+            mv -f "$TMP" "$TARGET" 2>/dev/null
+            chmod 644 "$TARGET" 2>/dev/null
+            log_info "target.txt 已同步，行数: $(wc -l < "$TARGET" 2>/dev/null || echo 0)"
         else
-            rm -f "$TMP"
+            rm -f "$TMP" 2>/dev/null
             log_info "target.txt 内容无变化，跳过写入"
         fi
     else
-        rm -f "$TMP"
+        rm -f "$TMP" 2>/dev/null
         log_warn "同步结果为空（可能包管理器异常）"
     fi
     update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
 }
 
 dispatch_sync() {
-    touch "$PENDING"
-    acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
+    touch "$PENDING" 2>/dev/null
+    acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING" 2>/dev/null; return 1; }
     while [ -f "$PENDING" ]; do
-        rm -f "$PENDING"
+        rm -f "$PENDING" 2>/dev/null
         sleep 0.1
     done
     do_sync
@@ -72,14 +88,14 @@ dispatch_sync() {
 for pid_file in "$BASE/.ts_daemon_b1.pid" "$BASE/.ts_daemon_b2.pid" "$BASE/.ts_patch.pid" "$MAIN_PID_FILE"; do
     if [ -f "$pid_file" ]; then
         old_pid=$(cat "$pid_file" 2>/dev/null)
-        [ -n "$old_pid" ] && kill -9 "$old_pid" 2>/dev/null
-        rm -f "$pid_file"
+        [ -n "$old_pid" ] && kill -9 "$old_pid" 2>/dev/null && sleep 0.1
+        rm -f "$pid_file" 2>/dev/null
     fi
 done
-rm -f "$TMP" "$PENDING"
-rm -rf "$LOCK_DIR"
+rm -f "$TMP" "$PENDING" 2>/dev/null
+rm -rf "$LOCK_DIR" 2>/dev/null
 
-until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
+until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
 
 log_info "系统启动完成，执行首次同步"
 dispatch_sync
@@ -96,64 +112,100 @@ dispatch_sync
 PATCH_PID=$!
 
 # 监控 packages.list
-start_monitor_pkg() {
-    (
-        while true; do
-            [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
-            inotifyd - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do
-                log_info "检测到 packages.list 变化"
-                dispatch_sync
-            done
-            sleep 2
+(
+    while true; do
+        [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
+        $INOTIFY_CMD - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do
+            log_info "检测到 packages.list 变化"
+            dispatch_sync
         done
-    ) &
-    echo $!
-}
-MONITOR1_PID=$(start_monitor_pkg)
+        log_warn "packages.list 监听进程退出，2秒后重启"
+        sleep 2
+    done
+) &
+MONITOR1_PID=$!
 
-# 监控 taa_sys.txt（采用已验证的工作循环）
-start_monitor_sys() {
-    (
-        while true; do
-            # 确保文件存在且上下文正确
-            [ -f "$TAA_SYS_FILE" ] || {
-                printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                chmod 640 "$TAA_SYS_FILE"
-                chown root:root "$TAA_SYS_FILE" 2>/dev/null
-                chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
-                log_info "taa_sys.txt 已创建（初始）"
-                dispatch_sync
-            }
-            # 启动 inotifyd 监听，错误输出重定向到日志
-            inotifyd - "$TAA_SYS_FILE:wc" 2>>"$LOG_FILE" | while read -r _; do
-                log_info "检测到 taa_sys.txt 变化"
-                dispatch_sync
-            done
-            log_warn "taa_sys.txt 监听进程退出，2秒后重启"
-            sleep 2
+# 监控 taa_sys.txt
+(
+    while true; do
+        [ -f "$TAA_SYS_FILE" ] || {
+            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
+            chmod 640 "$TAA_SYS_FILE" 2>/dev/null
+            chown root:root "$TAA_SYS_FILE" 2>/dev/null
+            chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
+            log_info "taa_sys.txt 已创建（初始）"
+            dispatch_sync
+        }
+        $INOTIFY_CMD - "$TAA_SYS_FILE:wc" 2>>"$LOG_FILE" | while read -r _; do
+            log_info "检测到 taa_sys.txt 变化"
+            dispatch_sync
         done
-    ) &
-    echo $!
+        log_warn "taa_sys.txt 监听进程退出，2秒后重启"
+        sleep 2
+    done
+) &
+MONITOR2_PID=$!
+
+# 记录主进程 PID
+echo $$ > "$MAIN_PID_FILE" 2>/dev/null
+log_info "主守护进程已启动，PID: $$, MONITOR2_PID: $MONITOR2_PID"
+
+cleanup() {
+    log_info "收到终止信号，清理子进程"
+    kill $PATCH_PID $MONITOR1_PID $MONITOR2_PID 2>/dev/null
+    rm -f "$MAIN_PID_FILE" 2>/dev/null
+    exit 0
 }
-MONITOR2_PID=$(start_monitor_sys)
+trap 'cleanup' INT TERM QUIT
 
-echo $$ > "$MAIN_PID_FILE"
-trap 'kill $PATCH_PID $MONITOR1_PID $MONITOR2_PID 2>/dev/null; rm -f "$MAIN_PID_FILE"; exit' INT TERM
-
-# 心跳检测（每 5 分钟）
+# 心跳检测（每 5 分钟），监控子进程状态并自动重启
 while true; do
     sleep 300
     if ! kill -0 $PATCH_PID 2>/dev/null; then
         log_warn "补丁进程重启"
-        ( while true; do update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0; sleep 43200; done ) &
+        (
+            while true; do
+                update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0
+                sleep 43200
+            done
+        ) &
         PATCH_PID=$!
     fi
     if ! kill -0 $MONITOR1_PID 2>/dev/null; then
         log_warn "监控1 (packages.list) 重启"
-        MONITOR1_PID=$(start_monitor_pkg)
+        (
+            while true; do
+                [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
+                $INOTIFY_CMD - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do
+                    log_info "检测到 packages.list 变化"
+                    dispatch_sync
+                done
+                log_warn "packages.list 监听进程退出，2秒后重启"
+                sleep 2
+            done
+        ) &
+        MONITOR1_PID=$!
     fi
     if ! kill -0 $MONITOR2_PID 2>/dev/null; then
         log_warn "监控2 (taa_sys.txt) 重启"
-        MONITOR2_PID=$(start_monitor_sys)
+        (
+            while true; do
+                [ -f "$TAA_SYS_FILE" ] || {
+                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
+                    chmod 640 "$TAA_SYS_FILE" 2>/dev/null
+                    chown root:root "$TAA_SYS_FILE" 2>/dev/null
+                    chcon system_data_file "$TAA_SYS_FILE" 2>/dev/null || true
+                    log_info "taa_sys.txt 已创建（重启）"
+                    dispatch_sync
+                }
+                $INOTIFY_CMD - "$TAA_SYS_FILE:wc" 2>>"$LOG_FILE" | while read -r _; do
+                    log_info "检测到 taa_sys.txt 变化"
+                    dispatch_sync
+                done
+                log_warn "taa_sys.txt 监听进程退出，2秒后重启"
+                sleep 2
+            done
+        ) &
+        MONITOR2_PID=$!
     fi
 done
