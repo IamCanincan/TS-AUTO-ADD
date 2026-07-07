@@ -63,7 +63,7 @@ do_sync() {
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
-    # 合并短时间内的多次触发，延迟 50 毫秒，平衡实时性与资源消耗
+    # 合并短时间内的多次触发，延迟 0.05 秒
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
         sleep 0.05
@@ -100,7 +100,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# ---------- 辅助函数：启动一个监控子进程 ----------
+# ---------- 辅助函数：启动一个监控子进程（inotify 方式） ----------
 start_monitor() {
     local file="$1"
     local events="$2"
@@ -116,26 +116,43 @@ start_monitor() {
     echo $!
 }
 
-# 监控 packages.list 变化
+# 监控 packages.list 变化（使用 inotify，有效且可靠）
 MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
 
-# ---------- 监控 taa_sys.txt 变更（目录监控方式） ----------
-# 监控整个 BASE 目录，捕获 taa_sys.txt 的创建、写入、删除事件
+# ---------- 监控 taa_sys.txt 变更（inotify 监控目录 + mtime 校验） ----------
+# 监控整个 BASE 目录，事件触发时检查 taa_sys.txt 是否变化
 (
+    TAA_SYS_FILE="$BASE/taa_sys.txt"
+    LAST_MTIME=""
+    # 初始化记录当前 mtime
+    if [ -f "$TAA_SYS_FILE" ]; then
+        LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+    fi
+
     while true; do
+        # 监控目录事件（写入、创建、删除）
         inotifyd - "$BASE:wyc" 2>/dev/null | while read -r line; do
-            # 仅处理与 taa_sys.txt 相关的事件
+            # 检查是否是 taa_sys.txt 相关事件（事件行可能包含文件名）
             if echo "$line" | grep -q "taa_sys.txt"; then
-                # 若文件被删除，则立即重建默认内容
-                if [ ! -f "$BASE/taa_sys.txt" ]; then
-                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$BASE/taa_sys.txt"
-                    chmod 644 "$BASE/taa_sys.txt"
-                    log_info "taa_sys.txt 已重建"
+                # 文件存在时比较 mtime
+                if [ -f "$TAA_SYS_FILE" ]; then
+                    CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                    if [ -n "$CURRENT_MTIME" ] && [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
+                        LAST_MTIME="$CURRENT_MTIME"
+                        log_info "taa_sys.txt 修改时间变化，触发同步"
+                        dispatch_sync
+                    fi
+                else
+                    # 文件被删除，重建默认内容并触发同步
+                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                    chmod 644 "$TAA_SYS_FILE"
+                    LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                    log_info "taa_sys.txt 已重建，触发同步"
+                    dispatch_sync
                 fi
-                log_info "taa_sys.txt 变化事件触发"
-                dispatch_sync
             fi
         done
+        # 若 inotifyd 意外退出，短暂等待后重启
         sleep 2
     done
 ) &
@@ -170,16 +187,28 @@ while true; do
     if ! kill -0 $MONITOR2_PID 2>/dev/null; then
         log_warn "监控2 (taa_sys.txt) 重启 (计数 $restart_count)"
         (
+            TAA_SYS_FILE="$BASE/taa_sys.txt"
+            LAST_MTIME=""
+            if [ -f "$TAA_SYS_FILE" ]; then
+                LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+            fi
             while true; do
                 inotifyd - "$BASE:wyc" 2>/dev/null | while read -r line; do
                     if echo "$line" | grep -q "taa_sys.txt"; then
-                        if [ ! -f "$BASE/taa_sys.txt" ]; then
-                            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$BASE/taa_sys.txt"
-                            chmod 644 "$BASE/taa_sys.txt"
-                            log_info "taa_sys.txt 已重建"
+                        if [ -f "$TAA_SYS_FILE" ]; then
+                            CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                            if [ -n "$CURRENT_MTIME" ] && [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
+                                LAST_MTIME="$CURRENT_MTIME"
+                                log_info "taa_sys.txt 修改时间变化，触发同步"
+                                dispatch_sync
+                            fi
+                        else
+                            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                            chmod 644 "$TAA_SYS_FILE"
+                            LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
+                            log_info "taa_sys.txt 已重建，触发同步"
+                            dispatch_sync
                         fi
-                        log_info "taa_sys.txt 变化事件触发"
-                        dispatch_sync
                     fi
                 done
                 sleep 2
