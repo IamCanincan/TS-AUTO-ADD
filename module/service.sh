@@ -13,6 +13,7 @@ TAA_SYS_FILE="$BASE/taa_sys.txt"
 TMP="${BASE}/.ts_tmp"
 PENDING="${BASE}/.ts_pending"
 LOCK_DIR="${BASE}/.ts_lock"
+REF_FILE="${BASE}/.ts_ref"
 
 PATCH_CONFIG_FILE="$BASE/security_patch.txt"
 PATCH_CACHE_FILE="$BASE/.last_month"
@@ -76,7 +77,7 @@ for pid_file in "$BASE/.ts_daemon_b1.pid" "$BASE/.ts_daemon_b2.pid" "$BASE/.ts_p
         rm -f "$pid_file"
     fi
 done
-rm -f "$TMP" "$PENDING"
+rm -f "$TMP" "$PENDING" "$REF_FILE"
 rm -rf "$LOCK_DIR"
 
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
@@ -94,7 +95,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# [2] 应用安装监听：完全照搬你原版验证成功的逻辑！绝对不改！
+# [2] 应用安装监听：绝对有效的原版独立监听（绝不修改）
 start_monitor_pkg() {
     (
         while true; do
@@ -109,22 +110,25 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# [3] 白名单配置监听：回归原版不会报错的 wyc 参数，并加入极简拦截器
+# [3] 白名单配置监听：采用【时间锚点法】彻底解决死循环与解析失败
 start_monitor_sys() {
     (
         while true; do
             mkdir -p "$BASE"
             [ -f "$TAA_SYS_FILE" ] || touch "$TAA_SYS_FILE"
             
-            # wyc (写入/移动到/创建) 是原脚本验证过，你的底层系统绝对支持的参数
-            inotifyd - "$BASE:wyc" 2>/dev/null | while read -r event file_name; do
-                # 过滤机制：只要抛出事件的文件名里包含 taa_sys.txt，就立即同步。
-                # 如果是脚本自己生成的 target.txt 或者 .ts_tmp，直接无视掉（完美解决死循环耗电）。
-                case "$file_name" in
-                    *"taa_sys.txt"*)
-                        dispatch_sync
-                        ;;
-                esac
+            # 创建一个时间锚点文件
+            touch "$REF_FILE"
+            
+            # 监听整个目录的任何风吹草动 (写入/移动/创建/删除)
+            # 我们完全丢弃 inotifyd 输出的残缺文件名（read -r _）
+            inotifyd - "$BASE:wycd" 2>/dev/null | while read -r _; do
+                # 门铃响了，使用 Shell 内建逻辑判断：
+                # 如果 taa_sys.txt 比我们的时间锚点 (.ts_ref) 更新，说明它真被修改了！
+                if [ "$TAA_SYS_FILE" -nt "$REF_FILE" ]; then
+                    touch "$REF_FILE"  # 立即刷新锚点时间
+                    dispatch_sync
+                fi
             done
             sleep 2
         done
