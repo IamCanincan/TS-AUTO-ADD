@@ -1,13 +1,13 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 后台守护服务（合并监控，避免冲突）
+# service.sh - 后台守护服务（双文件监控，避免过滤问题）
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
 PROP_FILE="$MODDIR/module.prop"
 BASE="/data/adb/tricky_store"
 TARGET="$BASE/target.txt"
-WATCH_DIR="/data/system"   # 监控整个 /data/system 目录
+WATCH_FILE="/data/system/packages.list"
 
 TMP="${BASE}/.ts_tmp"
 PENDING="${BASE}/.ts_pending"
@@ -91,33 +91,46 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# ---------- 合并监控线程（监控 /data/system 目录） ----------
-(
-    while true; do
-        # 监控目录内所有文件的写入、创建、删除事件
-        inotifyd - "$WATCH_DIR:wyc" 2>/dev/null | while read -r event; do
-            # 检查事件是否涉及 packages.list 或 taa_sys.txt
-            if echo "$event" | grep -q "packages.list"; then
+# ---------- 监控线程 1：packages.list ----------
+start_monitor_pkg() {
+    (
+        while true; do
+            [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
+            inotifyd - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do
                 log_info "检测到 packages.list 变化"
                 dispatch_sync
-            elif echo "$event" | grep -q "ts_auto_add/taa_sys.txt"; then
-                # 确保文件存在，若缺失则重建
-                if [ ! -f "$TAA_SYS_FILE" ]; then
-                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                    chmod 644 "$TAA_SYS_FILE"
-                    log_info "taa_sys.txt 已重建（监控捕捉到删除）"
-                fi
-                log_info "检测到 taa_sys.txt 变化"
+            done
+            sleep 2
+        done
+    ) &
+    echo $!
+}
+MONITOR1_PID=$(start_monitor_pkg)
+
+# ---------- 监控线程 2：taa_sys.txt（直接监控文件，避免过滤） ----------
+start_monitor_sys() {
+    (
+        while true; do
+            mkdir -p "$(dirname "$TAA_SYS_FILE")"
+            if [ ! -f "$TAA_SYS_FILE" ]; then
+                printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                chmod 644 "$TAA_SYS_FILE"
+                log_info "taa_sys.txt 已创建（初始）"
                 dispatch_sync
             fi
+            inotifyd - "$TAA_SYS_FILE:w" 2>/dev/null | while read -r _; do
+                log_info "检测到 taa_sys.txt 变化"
+                dispatch_sync
+            done
+            sleep 2
         done
-        sleep 2
-    done
-) &
-MONITOR_PID=$!
+    ) &
+    echo $!
+}
+MONITOR2_PID=$(start_monitor_sys)
 
 echo $$ > "$MAIN_PID_FILE"
-trap 'kill $PATCH_PID $MONITOR_PID 2>/dev/null; rm -f "$MAIN_PID_FILE"; exit' INT TERM
+trap 'kill $PATCH_PID $MONITOR1_PID $MONITOR2_PID 2>/dev/null; rm -f "$MAIN_PID_FILE"; exit' INT TERM
 
 # 心跳检测（每 5 分钟）
 while true; do
@@ -127,27 +140,12 @@ while true; do
         ( while true; do update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0; sleep 43200; done ) &
         PATCH_PID=$!
     fi
-    if ! kill -0 $MONITOR_PID 2>/dev/null; then
-        log_warn "监控进程重启"
-        (
-            while true; do
-                inotifyd - "$WATCH_DIR:wyc" 2>/dev/null | while read -r event; do
-                    if echo "$event" | grep -q "packages.list"; then
-                        log_info "检测到 packages.list 变化"
-                        dispatch_sync
-                    elif echo "$event" | grep -q "ts_auto_add/taa_sys.txt"; then
-                        if [ ! -f "$TAA_SYS_FILE" ]; then
-                            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                            chmod 644 "$TAA_SYS_FILE"
-                            log_info "taa_sys.txt 已重建（监控捕捉到删除）"
-                        fi
-                        log_info "检测到 taa_sys.txt 变化"
-                        dispatch_sync
-                    fi
-                done
-                sleep 2
-            done
-        ) &
-        MONITOR_PID=$!
+    if ! kill -0 $MONITOR1_PID 2>/dev/null; then
+        log_warn "监控1 (packages.list) 重启"
+        MONITOR1_PID=$(start_monitor_pkg)
+    fi
+    if ! kill -0 $MONITOR2_PID 2>/dev/null; then
+        log_warn "监控2 (taa_sys.txt) 重启"
+        MONITOR2_PID=$(start_monitor_sys)
     fi
 done
