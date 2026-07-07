@@ -1,10 +1,11 @@
 #!/system/bin/sh
 #=============================================================================
-# 公共函数库 (common.sh)
-# 提供锁、日期处理、补丁获取、状态更新等共享功能
+# 公共函数
+# 提供锁、日期处理、网络补丁获取和模块状态更新功能
 #=============================================================================
 
-# ---------- 锁（纯 mkdir 目录锁） ----------
+# ---------- 锁 ----------
+# 使用 mkdir 创建目录作为原子锁，超时 30 秒后强制清理
 acquire_lock() {
     local lock_dir="$1"
     local timeout=30
@@ -26,7 +27,7 @@ release_lock() {
     rmdir "$1" 2>/dev/null
 }
 
-# ---------- 日期工具 ----------
+# ---------- 日期处理 ----------
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
@@ -63,7 +64,7 @@ pick_newer() {
     [ "$(echo "$d1" | tr -d '-')" -ge "$(echo "$d2" | tr -d '-')" ] && echo "$d1" || echo "$d2"
 }
 
-# ---------- 更新模块状态描述 ----------
+# ---------- 更新模块描述 ----------
 update_module_status() {
     local prop_file="$1"
     local base_dir="$2"
@@ -78,8 +79,8 @@ update_module_status() {
     sed -i "s@^description=.*@description=${status_text}@" "$prop_file" 2>/dev/null
 }
 
-# ---------- 安全补丁更新逻辑（供 action/service 共用） ----------
-# 参数：$1 = BASE_DIR, $2 = PATCH_CONFIG_FILE, $3 = PATCH_CACHE_FILE, $4 = PROP_FILE, $5 = FORCE_MODE (0/1)
+# ---------- 安全补丁更新逻辑 ----------
+# 参数：$1 = BASE_DIR, $2 = PATCH_CONFIG_FILE, $3 = PATCH_CACHE_FILE, $4 = PROP_FILE, $5 = FORCE_MODE
 update_security_patch_core() {
     local base_dir="$1"
     local patch_config="$2"

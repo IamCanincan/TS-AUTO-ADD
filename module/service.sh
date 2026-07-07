@@ -1,7 +1,7 @@
 #!/system/bin/sh
 #=============================================================================
-# 后台常驻同步守护服务 (service.sh)
-# 功能：监听文件变化并同步 target.txt，定时更新安全补丁日期
+# service.sh - 后台守护服务
+# 功能：监听文件变化并同步 target.txt，定期更新安全补丁日期
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -63,9 +63,10 @@ do_sync() {
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
+    # 合并短时间内的多次触发，延迟 0.2 秒
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
-        sleep 1
+        sleep 0.2
     done
     do_sync
     release_lock "$LOCK_DIR"
@@ -118,18 +119,22 @@ start_monitor() {
 # 监控 packages.list 变化
 MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
 
-# 监控 taa_sys.txt 变化（文件缺失时重建并主动同步）
+# ---------- 监控 taa_sys.txt 变更（目录监控方式） ----------
+# 监控整个 BASE 目录，捕获 taa_sys.txt 的创建、写入、删除事件
 (
-    TAA_SYS_FILE="$BASE/taa_sys.txt"
     while true; do
-        if [ ! -f "$TAA_SYS_FILE" ]; then
-            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-            chmod 644 "$TAA_SYS_FILE"
-            log_info "taa_sys.txt 已重建，主动触发同步"
-            dispatch_sync
-        fi
-        inotifyd - "$TAA_SYS_FILE:wy" 2>/dev/null | while read -r _; do
-            dispatch_sync
+        inotifyd - "$BASE:wyc" 2>/dev/null | while read -r line; do
+            # 仅处理与 taa_sys.txt 相关的事件
+            if echo "$line" | grep -q "taa_sys.txt"; then
+                # 若文件被删除，则立即重建默认内容
+                if [ ! -f "$BASE/taa_sys.txt" ]; then
+                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$BASE/taa_sys.txt"
+                    chmod 644 "$BASE/taa_sys.txt"
+                    log_info "taa_sys.txt 已重建"
+                fi
+                log_info "taa_sys.txt 变化事件触发"
+                dispatch_sync
+            fi
         done
         sleep 2
     done
@@ -141,7 +146,7 @@ echo $$ > "$MAIN_PID_FILE"
 # 主进程健康监管
 trap 'log_info "收到退出信号，终止子进程"; kill $PATCH_PID $MONITOR1_PID $MONITOR2_PID 2>/dev/null; rm -f "$MAIN_PID_FILE"; exit' INT TERM
 
-# 子进程重启计数器（防止频繁重启）
+# 子进程重启计数器
 restart_count=0
 max_restart=5
 reset_interval=600  # 10分钟内超过5次则进入冷静期
@@ -165,16 +170,17 @@ while true; do
     if ! kill -0 $MONITOR2_PID 2>/dev/null; then
         log_warn "监控2 (taa_sys.txt) 重启 (计数 $restart_count)"
         (
-            TAA_SYS_FILE="$BASE/taa_sys.txt"
             while true; do
-                if [ ! -f "$TAA_SYS_FILE" ]; then
-                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                    chmod 644 "$TAA_SYS_FILE"
-                    log_info "taa_sys.txt 已重建，主动触发同步"
-                    dispatch_sync
-                fi
-                inotifyd - "$TAA_SYS_FILE:wy" 2>/dev/null | while read -r _; do
-                    dispatch_sync
+                inotifyd - "$BASE:wyc" 2>/dev/null | while read -r line; do
+                    if echo "$line" | grep -q "taa_sys.txt"; then
+                        if [ ! -f "$BASE/taa_sys.txt" ]; then
+                            printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$BASE/taa_sys.txt"
+                            chmod 644 "$BASE/taa_sys.txt"
+                            log_info "taa_sys.txt 已重建"
+                        fi
+                        log_info "taa_sys.txt 变化事件触发"
+                        dispatch_sync
+                    fi
                 done
                 sleep 2
             done
@@ -183,7 +189,7 @@ while true; do
         restart_count=$((restart_count + 1))
     fi
 
-    # 若重启过于频繁，则进入冷静期（延长检查间隔）
+    # 若重启过于频繁，进入冷静期
     if [ $restart_count -ge $max_restart ]; then
         log_warn "子进程频繁重启，进入冷静期 10 分钟"
         sleep $reset_interval

@@ -19,14 +19,14 @@ if [ ! -f "$BASE_DIR/target.txt" ]; then
     touch "$BASE_DIR/target.txt"
     chmod 644 "$BASE_DIR/target.txt"
 fi
-ui_print "  ✓ 工作目录已就绪"
+ui_print "  工作目录已就绪"
 
 # 检查 inotifyd 命令是否存在
 if ! command -v inotifyd >/dev/null 2>&1; then
-    ui_print "  ✗ 未找到 inotifyd 命令，系统不支持文件事件监听"
+    ui_print "  未找到 inotifyd 命令，系统不支持文件事件监听"
     abort "安装终止，请确认内核已启用 inotify 或安装 busybox 包含 inotifyd。"
 fi
-ui_print "  ✓ inotifyd 工具已存在"
+ui_print "  inotifyd 工具已存在"
 
 ui_print " "
 ui_print "[2/6] 设置核心脚本权限"
@@ -46,7 +46,7 @@ if [ -f "$MODPATH/taa_resetprop.sh" ]; then
     cp -f "$MODPATH/taa_resetprop.sh" "/data/adb/service.d/taa_resetprop.sh"
     chmod 0755 "/data/adb/service.d/taa_resetprop.sh"
     rm -f "$MODPATH/taa_resetprop.sh"
-    ui_print "  ✓ 已部署"
+    ui_print "  已部署"
 fi
 
 ui_print " "
@@ -77,10 +77,10 @@ if [ -s "$BASE_DIR/.ts_tmp" ]; then
     mv -f "$BASE_DIR/.ts_tmp" "$BASE_DIR/target.txt"
     chmod 644 "$BASE_DIR/target.txt"
     count=$(wc -l < "$BASE_DIR/target.txt")
-    ui_print "  ✓ 同步完成，记录包数: $count"
+    ui_print "  同步完成，记录包数: $count"
 else
     rm -f "$BASE_DIR/.ts_tmp"
-    ui_print "  ⚠ 获取为空，由守护进程后续处理"
+    ui_print "  获取为空，由守护进程后续处理"
 fi
 
 ui_print " "
