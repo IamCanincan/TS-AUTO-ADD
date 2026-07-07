@@ -1,7 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
 # service.sh - 后台守护服务
-# 监控策略：监听目录所有事件，无条件触发同步
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -100,7 +99,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# 监控 packages.list（直接监控文件）
+# 监控 packages.list（文件监控）
 start_monitor_pkg() {
     (
         while true; do
@@ -116,7 +115,7 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# ---------- 监控 taa_sys.txt（监控整个目录，无条件触发） ----------
+# ---------- 监控 taa_sys.txt（文件监控 + 自恢复） ----------
 start_monitor_sys() {
     (
         while true; do
@@ -128,14 +127,19 @@ start_monitor_sys() {
                 dispatch_sync
             fi
 
-            # 监控整个 BASE 目录，任何事件（写入、创建、删除）都触发同步
-            inotifyd - "$BASE:wyc" 2>/dev/null | while read -r event; do
-                # 记录事件内容（便于调试）
-                log_info "目录事件触发: $event"
-                # 无需过滤，直接同步
+            # 监控文件（与 packages.list 相同方式）
+            inotifyd - "$TAA_SYS_FILE:wyc" 2>/dev/null | while read -r event; do
+                log_info "taa_sys.txt 事件: $event"
+                if [ ! -f "$TAA_SYS_FILE" ]; then
+                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                    chmod 644 "$TAA_SYS_FILE"
+                    log_info "taa_sys.txt 已重建"
+                fi
                 dispatch_sync
+                # 退出当前 inotifyd，外层循环重启，确保监控持续
+                break
             done
-            sleep 2
+            sleep 1
         done
     ) &
     echo $!
