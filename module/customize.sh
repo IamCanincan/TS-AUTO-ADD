@@ -51,7 +51,7 @@ fi
 ui_print " "
 ui_print "[5/6] 执行首次应用列表同步"
 
-TAA_SYS_FILE="/data/local/tmp/taa_sys.txt"
+TAA_SYS_FILE="/data/local/tmp/ts_auto_add/taa_sys.txt"
 mkdir -p "$(dirname "$TAA_SYS_FILE")"
 
 apps_raw=""

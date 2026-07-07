@@ -33,8 +33,11 @@ done
 rm -rf "$BASE/.ts_lock" "$BASE/.ts_pending" "$BASE/.ts_tmp"
 rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak"
 
-# 删除 taa_sys.txt（如果存在）
-rm -f "/data/local/tmp/taa_sys.txt"
+# 删除日志文件
+rm -f "/data/local/tmp/ts_auto.log"
+
+# 删除 taa_sys.txt 及其文件夹
+rm -rf "/data/local/tmp/ts_auto_add"
 rm -f "$BASE/taa_sys.txt"
 
 rm -f "/data/adb/service.d/taa_resetprop.sh"

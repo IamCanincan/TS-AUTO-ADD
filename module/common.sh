@@ -3,7 +3,27 @@
 # 公共函数库
 #=============================================================================
 
-TAA_SYS_FILE="/data/local/tmp/taa_sys.txt"
+TAA_SYS_FILE="/data/local/tmp/ts_auto_add/taa_sys.txt"
+LOG_FILE="/data/local/tmp/ts_auto.log"
+
+# ---------- 日志函数（同时输出到文件和 logcat） ----------
+log_info() {
+    local msg="[INFO] $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "$msg" >> "$LOG_FILE"
+    logger -t TS-AUTO -p info "$*" 2>/dev/null
+}
+
+log_warn() {
+    local msg="[WARN] $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "$msg" >> "$LOG_FILE"
+    logger -t TS-AUTO -p warn "$*" 2>/dev/null
+}
+
+log_err() {
+    local msg="[ERR] $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "$msg" >> "$LOG_FILE"
+    logger -t TS-AUTO -p err "$*" 2>/dev/null
+}
 
 # ---------- 锁 ----------
 acquire_lock() {

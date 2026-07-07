@@ -20,10 +20,6 @@ MAIN_PID_FILE="${BASE}/.ts_daemon_main.pid"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/common.sh" || { logger -t TS-AUTO -p err "无法加载 common.sh"; exit 1; }
 
-log_info() { logger -t TS-AUTO -p info "$*"; }
-log_warn() { logger -t TS-AUTO -p warn "$*"; }
-log_err()  { logger -t TS-AUTO -p err "$*"; }
-
 # ---------- 同步核心 ----------
 do_sync() {
     mkdir -p "$BASE"
