@@ -14,76 +14,13 @@ TMP="$BASE/.ts_tmp"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
+# 加载公共函数库
+. "$MODDIR/common.sh" || { echo "无法加载 common.sh" >&2; exit 1; }
+
 if [ "$(id -u)" -ne 0 ]; then
     echo " [错误] 需要 root 权限" >&2
     exit 1
 fi
-
-# ---------- 锁（纯 mkdir 目录锁） ----------
-acquire_lock() {
-    local timeout=30
-    local waited=0
-    while [ $waited -lt $timeout ]; do
-        if mkdir "$LOCK_DIR" 2>/dev/null; then
-            return 0
-        fi
-        sleep 1
-        waited=$((waited + 1))
-    done
-    echo " [警告] 锁获取超时，强制清理残留锁..."
-    rmdir "$LOCK_DIR" 2>/dev/null
-    mkdir "$LOCK_DIR" 2>/dev/null || return 1
-    return 0
-}
-
-release_lock() {
-    rmdir "$LOCK_DIR" 2>/dev/null
-}
-
-# ---------- 工具函数 ----------
-clean_date() { echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1; }
-
-force_to_05() {
-    local in_date="$1"
-    [ -n "$in_date" ] || return
-    case "$in_date" in *-01) echo "${in_date%-01}-05" ;; *) echo "$in_date" ;; esac
-}
-
-get_system_date() {
-    force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
-}
-
-fetch_online_date() {
-    local url="$1" html="" patch=""
-    local user_agent="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
-    if command -v curl >/dev/null 2>&1; then
-        html=$(curl --connect-timeout 5 -m 10 -Ls -A "$user_agent" "$url" 2>/dev/null)
-    elif command -v wget >/dev/null 2>&1; then
-        html=$(wget -T 10 --connect-timeout=5 --no-check-certificate -U "$user_agent" -qO- "$url" 2>/dev/null)
-    else
-        return 1
-    fi
-    # 提取表格中第一个日期（通常是当月最新）
-    patch=$(echo "$html" | sed -n 's/.*<td>\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)<\/td>.*/\1/p' | head -n1)
-    [ -n "$patch" ] && echo "$patch" || return 1
-}
-
-pick_newer() {
-    local d1="$1" d2="$2"
-    [ -z "$d1" ] && { echo "$d2"; return; }
-    [ -z "$d2" ] && { echo "$d1"; return; }
-    [ "$(echo "$d1" | tr -d '-')" -ge "$(echo "$d2" | tr -d '-')" ] && echo "$d1" || echo "$d2"
-}
-
-update_module_status() {
-    [ -f "$PROP_FILE" ] || return 0
-    local app_count=0
-    [ -f "$BASE/target.txt" ] && app_count=$(wc -l < "$BASE/target.txt")
-    local patch_date="未配置"
-    [ -f "$PATCH_CONFIG_FILE" ] && patch_date=$(grep '^boot=' "$PATCH_CONFIG_FILE" | cut -d'=' -f2)
-    [ -z "$patch_date" ] && patch_date="未知"
-    sed -i "s@^description=.*@description=[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]@" "$PROP_FILE" 2>/dev/null
-}
 
 # ---------- 参数处理 ----------
 FORCE_MODE=0
@@ -92,7 +29,7 @@ case "$1" in --force|-f) FORCE_MODE=1 ;; --help|-h) echo "用法: $0 [--force]";
 echo "================================================"
 echo "          TS-AUTO-ADD 手动同步工具"
 echo "================================================"
-acquire_lock || exit 1
+acquire_lock "$LOCK_DIR" || exit 1
 
 echo ""
 echo "[1/3] 获取应用列表"
@@ -121,64 +58,14 @@ fi
 
 echo ""
 echo "[2/3] 更新安全补丁日期"
-SYSTEM_DATE=$(get_system_date)
-if [ -z "$SYSTEM_DATE" ]; then
-    echo " [✗] 无法获取系统补丁日期"
-    release_lock; exit 1
-fi
-echo "  系统日期: $SYSTEM_DATE"
-
-SYS_YM="${SYSTEM_DATE%-*}"
-NEED_ONLINE=0
-if [ -f "$PATCH_CACHE_FILE" ] && [ $FORCE_MODE -eq 0 ]; then
-    [ "$(cat "$PATCH_CACHE_FILE")" != "$SYS_YM" ] && NEED_ONLINE=1
-else
-    NEED_ONLINE=1
-fi
-
-FINAL_DATE="$SYSTEM_DATE"
-if [ $NEED_ONLINE -eq 1 ]; then
-    echo "  从 AOSP 获取最新日期"
-    NET_DATE=""
-    retry=0
-    while [ $retry -lt 3 ] && [ -z "$NET_DATE" ]; do
-        for url in "https://source.android.com/docs/security/bulletin/pixel" "https://source.android.google.cn/docs/security/bulletin/pixel"; do
-            NET_DATE=$(fetch_online_date "$url")
-            [ -n "$NET_DATE" ] && break
-        done
-        [ -z "$NET_DATE" ] && { retry=$((retry+1)); sleep 2; }
-    done
-    if [ -n "$NET_DATE" ]; then
-        NEWER=$(pick_newer "$SYSTEM_DATE" "$NET_DATE")
-        if [ "$NEWER" = "$NET_DATE" ] && [ "$NET_DATE" != "$SYSTEM_DATE" ]; then
-            FINAL_DATE="$NET_DATE"
-            echo "  [✓] 使用网络日期: $FINAL_DATE"
-        else
-            echo "  [i] 系统日期较新或相同"
-        fi
-        echo "$SYS_YM" > "$PATCH_CACHE_FILE"
-    else
-        echo "  [⚠] 网络请求失败，保留系统日期"
-    fi
-else
-    echo "  跳过网络请求（缓存命中）"
-fi
-
-cat << EOF > "$PATCH_CONFIG_FILE"
-system=$FINAL_DATE
-boot=$FINAL_DATE
-vendor=$FINAL_DATE
-EOF
-chmod 644 "$PATCH_CONFIG_FILE"
-echo "  补丁配置:"
-cat "$PATCH_CONFIG_FILE"
+update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" "$FORCE_MODE"
 
 echo ""
 echo "[3/3] 更新模块描述"
-update_module_status
+update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
 echo "  描述已刷新"
 
-release_lock
+release_lock "$LOCK_DIR"
 echo "================================================"
 echo "  同步完成"
 echo "================================================"

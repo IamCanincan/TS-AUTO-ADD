@@ -20,45 +20,13 @@ MAIN_PID_FILE="${BASE}/.ts_daemon_main.pid"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
+# 加载公共函数库
+. "$MODDIR/common.sh" || { logger -t TS-AUTO -p err "无法加载 common.sh"; exit 1; }
+
 # ---------- 日志 ----------
 log_info() { logger -t TS-AUTO -p info "$*"; }
 log_warn() { logger -t TS-AUTO -p warn "$*"; }
 log_err()  { logger -t TS-AUTO -p err "$*"; }
-
-# ---------- 锁（纯 mkdir 目录锁） ----------
-acquire_lock() {
-    local timeout=30
-    local waited=0
-    while [ $waited -lt $timeout ]; do
-        if mkdir "$LOCK_DIR" 2>/dev/null; then
-            return 0
-        fi
-        sleep 1
-        waited=$((waited + 1))
-    done
-    log_warn "锁获取超时，强制清理残留锁"
-    rmdir "$LOCK_DIR" 2>/dev/null
-    mkdir "$LOCK_DIR" 2>/dev/null || return 1
-    return 0
-}
-
-release_lock() {
-    rmdir "$LOCK_DIR" 2>/dev/null
-}
-
-# ---------- 模块描述更新 ----------
-update_module_status() {
-    [ -f "$PROP_FILE" ] || return 0
-    local app_count=0
-    [ -f "$TARGET" ] && app_count=$(wc -l < "$TARGET")
-    local patch_date="未配置"
-    if [ -f "$PATCH_CONFIG_FILE" ]; then
-        patch_date=$(grep '^boot=' "$PATCH_CONFIG_FILE" | cut -d'=' -f2)
-        [ -z "$patch_date" ] && patch_date="未知"
-    fi
-    local status_text="[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]"
-    sed -i "s@^description=.*@description=${status_text}@" "$PROP_FILE" 2>/dev/null
-}
 
 # ---------- 同步核心 ----------
 do_sync() {
@@ -89,104 +57,18 @@ do_sync() {
         rm -f "$TMP"
         log_warn "同步结果为空"
     fi
-    update_module_status
+    update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
 }
 
 dispatch_sync() {
     touch "$PENDING"
-    acquire_lock || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
+    acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
         sleep 1
     done
     do_sync
-    release_lock
-}
-
-# ---------- 安全补丁日期处理 ----------
-clean_date() {
-    echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
-}
-
-force_to_05() {
-    local in_date="$1"
-    [ -n "$in_date" ] || return
-    case "$in_date" in *-01) echo "${in_date%-01}-05" ;; *) echo "$in_date" ;; esac
-}
-
-get_system_date() {
-    force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
-}
-
-fetch_online_date() {
-    local url="$1" html="" patch=""
-    local user_agent="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"
-    if command -v curl >/dev/null 2>&1; then
-        html=$(curl --connect-timeout 5 -m 10 -Ls -A "$user_agent" "$url" 2>/dev/null)
-    elif command -v wget >/dev/null 2>&1; then
-        html=$(wget -T 10 --connect-timeout=5 --no-check-certificate -U "$user_agent" -qO- "$url" 2>/dev/null)
-    else
-        return 1
-    fi
-    patch=$(echo "$html" | sed -n 's/.*<td>\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)<\/td>.*/\1/p' | head -n1)
-    [ -n "$patch" ] && echo "$patch" || return 1
-}
-
-pick_newer() {
-    local d1="$1" d2="$2"
-    [ -z "$d1" ] && { echo "$d2"; return; }
-    [ -z "$d2" ] && { echo "$d1"; return; }
-    [ "$(echo "$d1" | tr -d '-')" -ge "$(echo "$d2" | tr -d '-')" ] && echo "$d1" || echo "$d2"
-}
-
-update_security_patch() {
-    local SYSTEM_DATE=$(get_system_date)
-    [ -z "$SYSTEM_DATE" ] && { log_err "无法获取系统补丁日期"; return 1; }
-    local SYS_YM="${SYSTEM_DATE%-*}"
-    local NEED_ONLINE=0
-    if [ -f "$PATCH_CACHE_FILE" ]; then
-        [ "$(cat "$PATCH_CACHE_FILE")" != "$SYS_YM" ] && NEED_ONLINE=1
-    else
-        NEED_ONLINE=1
-    fi
-
-    local FINAL_DATE="$SYSTEM_DATE"
-    if [ "$NEED_ONLINE" -eq 1 ]; then
-        local NET_DATE=""
-        local retry=0
-        while [ $retry -lt 3 ] && [ -z "$NET_DATE" ]; do
-            for url in "https://source.android.com/docs/security/bulletin/pixel" "https://source.android.google.cn/docs/security/bulletin/pixel"; do
-                NET_DATE=$(fetch_online_date "$url")
-                [ -n "$NET_DATE" ] && break
-            done
-            [ -z "$NET_DATE" ] && { retry=$((retry+1)); sleep 5; }
-        done
-        if [ -n "$NET_DATE" ]; then
-            local NEWER=$(pick_newer "$SYSTEM_DATE" "$NET_DATE")
-            if [ "$NEWER" = "$NET_DATE" ] && [ "$NET_DATE" != "$SYSTEM_DATE" ]; then
-                FINAL_DATE="$NET_DATE"
-                log_info "使用网络日期: $FINAL_DATE"
-            else
-                log_info "系统日期较新或相同: $SYSTEM_DATE"
-            fi
-            echo "$SYS_YM" > "$PATCH_CACHE_FILE"
-        else
-            log_warn "网络请求失败，使用系统日期"
-        fi
-    else
-        log_info "缓存命中 ($SYS_YM)"
-    fi
-
-    [ -f "$PATCH_CONFIG_FILE" ] && cp -f "$PATCH_CONFIG_FILE" "$PATCH_BACKUP_FILE"
-    cat << EOF > "$PATCH_CONFIG_FILE"
-system=$FINAL_DATE
-boot=$FINAL_DATE
-vendor=$FINAL_DATE
-EOF
-    chmod 644 "$PATCH_CONFIG_FILE"
-    chown root:root "$PATCH_CONFIG_FILE" 2>/dev/null
-    update_module_status
-    log_info "补丁配置写入: $FINAL_DATE"
+    release_lock "$LOCK_DIR"
 }
 
 # ---------- 启动流程 ----------
@@ -211,26 +93,33 @@ dispatch_sync
 # 启动补丁定时更新子进程
 (
     while true; do
-        update_security_patch
+        update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0
         sleep 43200
     done
 ) &
 PATCH_PID=$!
 
-# 监控 packages.list 变化
-(
-    while true; do
-        [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
-        inotifyd - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do
-            dispatch_sync
+# ---------- 辅助函数：启动一个监控子进程 ----------
+start_monitor() {
+    local file="$1"
+    local events="$2"
+    (
+        while true; do
+            [ -f "$file" ] || { sleep 5; continue; }
+            inotifyd - "$file:$events" 2>/dev/null | while read -r _; do
+                dispatch_sync
+            done
+            sleep 2
         done
-        sleep 2
-    done
-) &
-MONITOR1_PID=$!
+    ) &
+    echo $!
+}
 
-# 监控 taa_sys.txt 变化
-(
+# 监控 packages.list 变化
+MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
+
+# 监控 taa_sys.txt 变化（若文件被删则重建）
+MONITOR2_PID=$(
     TAA_SYS_FILE="$BASE/taa_sys.txt"
     while true; do
         if [ ! -f "$TAA_SYS_FILE" ]; then
@@ -243,7 +132,7 @@ MONITOR1_PID=$!
         sleep 2
     done
 ) &
-MONITOR2_PID=$!   # 修复：使用 $! 获取PID
+MONITOR2_PID=$!
 
 echo $$ > "$MAIN_PID_FILE"
 
@@ -260,21 +149,14 @@ while true; do
     # 补丁进程
     if ! kill -0 $PATCH_PID 2>/dev/null; then
         log_warn "补丁进程重启 (计数 $restart_count)"
-        ( while true; do update_security_patch; sleep 43200; done ) &
+        ( while true; do update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0; sleep 43200; done ) &
         PATCH_PID=$!
         restart_count=$((restart_count + 1))
     fi
     # 监控1
     if ! kill -0 $MONITOR1_PID 2>/dev/null; then
         log_warn "监控1 (packages.list) 重启 (计数 $restart_count)"
-        (
-            while true; do
-                [ -f "$WATCH_FILE" ] || { sleep 5; continue; }
-                inotifyd - "$WATCH_FILE:w" 2>/dev/null | while read -r _; do dispatch_sync; done
-                sleep 2
-            done
-        ) &
-        MONITOR1_PID=$!
+        MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
         restart_count=$((restart_count + 1))
     fi
     # 监控2
@@ -283,7 +165,10 @@ while true; do
         (
             TAA_SYS_FILE="$BASE/taa_sys.txt"
             while true; do
-                [ -f "$TAA_SYS_FILE" ] || { printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"; chmod 644 "$TAA_SYS_FILE"; }
+                if [ ! -f "$TAA_SYS_FILE" ]; then
+                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+                    chmod 644 "$TAA_SYS_FILE"
+                fi
                 inotifyd - "$TAA_SYS_FILE:wy" 2>/dev/null | while read -r _; do dispatch_sync; done
                 sleep 2
             done
