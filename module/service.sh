@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 后台守护服务
+# service.sh - 后台守护服务（稳定版）
 # 功能：监听文件变化并同步 target.txt，定期更新安全补丁日期
 #=============================================================================
 
@@ -63,7 +63,7 @@ do_sync() {
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
-    # 合并短时间内的多次触发，延迟 0.05 秒
+    # 合并短时间内的多次触发，延迟 0.05 秒，避免重复执行，提升稳定性
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
         sleep 0.05
@@ -100,7 +100,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# ---------- 辅助函数：启动一个监控子进程（inotify 方式） ----------
+# ---------- 辅助函数：启动一个监控子进程 ----------
 start_monitor() {
     local file="$1"
     local events="$2"
@@ -116,34 +116,34 @@ start_monitor() {
     echo $!
 }
 
-# 监控 packages.list 变化（使用 inotify，有效且可靠）
+# 监控 packages.list 变化
 MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
 
-# ---------- 监控 taa_sys.txt 变更（inotify 监控目录 + mtime 校验） ----------
-# 监控整个 BASE 目录，事件触发时检查 taa_sys.txt 是否变化
+# ---------- 监控 taa_sys.txt 变更（稳定版：inotify + mtime 校验 + 重建保护） ----------
 (
     TAA_SYS_FILE="$BASE/taa_sys.txt"
     LAST_MTIME=""
-    # 初始化记录当前 mtime
+    # 初始化记录当前 mtime（若文件存在）
     if [ -f "$TAA_SYS_FILE" ]; then
         LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
     fi
 
     while true; do
-        # 监控目录事件（写入、创建、删除）
+        # 监控目录事件（写入、创建、删除），并读取事件行
         inotifyd - "$BASE:wyc" 2>/dev/null | while read -r line; do
-            # 检查是否是 taa_sys.txt 相关事件（事件行可能包含文件名）
+            # 检查事件是否涉及 taa_sys.txt
             if echo "$line" | grep -q "taa_sys.txt"; then
-                # 文件存在时比较 mtime
+                # 文件存在，比较 mtime
                 if [ -f "$TAA_SYS_FILE" ]; then
                     CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
-                    if [ -n "$CURRENT_MTIME" ] && [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
+                    # 若 stat 获取失败（如不支持 -c），则按事件触发同步（保守策略）
+                    if [ -z "$CURRENT_MTIME" ] || [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
                         LAST_MTIME="$CURRENT_MTIME"
-                        log_info "taa_sys.txt 修改时间变化，触发同步"
+                        log_info "taa_sys.txt 变化 (mtime 校验)，触发同步"
                         dispatch_sync
                     fi
                 else
-                    # 文件被删除，重建默认内容并触发同步
+                    # 文件被删除，立即重建默认内容并触发同步
                     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
                     chmod 644 "$TAA_SYS_FILE"
                     LAST_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
@@ -152,7 +152,7 @@ MONITOR1_PID=$(start_monitor "$WATCH_FILE" "w")
                 fi
             fi
         done
-        # 若 inotifyd 意外退出，短暂等待后重启
+        # 若 inotifyd 异常退出，短暂等待后重启循环
         sleep 2
     done
 ) &
@@ -197,9 +197,9 @@ while true; do
                     if echo "$line" | grep -q "taa_sys.txt"; then
                         if [ -f "$TAA_SYS_FILE" ]; then
                             CURRENT_MTIME=$(stat -c %Y "$TAA_SYS_FILE" 2>/dev/null)
-                            if [ -n "$CURRENT_MTIME" ] && [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
+                            if [ -z "$CURRENT_MTIME" ] || [ "$CURRENT_MTIME" != "$LAST_MTIME" ]; then
                                 LAST_MTIME="$CURRENT_MTIME"
-                                log_info "taa_sys.txt 修改时间变化，触发同步"
+                                log_info "taa_sys.txt 变化 (mtime 校验)，触发同步"
                                 dispatch_sync
                             fi
                         else
