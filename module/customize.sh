@@ -21,7 +21,6 @@ if [ ! -f "$BASE_DIR/target.txt" ]; then
 fi
 ui_print "  工作目录已就绪"
 
-# 检查 inotifyd 命令是否存在
 if ! command -v inotifyd >/dev/null 2>&1; then
     ui_print "  未找到 inotifyd 命令，系统不支持文件事件监听"
     abort "安装终止，请确认内核已启用 inotify 或安装 busybox 包含 inotifyd。"
@@ -52,11 +51,9 @@ fi
 ui_print " "
 ui_print "[5/6] 执行首次应用列表同步"
 
-# 定义新路径（与 common.sh 一致）
-TAA_SYS_FILE="/storage/emulated/0/Documents/taa_sys.txt"
+TAA_SYS_FILE="/storage/emulated/0/Documents/taa_sys/taa_sys.txt"
 mkdir -p "$(dirname "$TAA_SYS_FILE")"
 
-# 获取第三方应用包名（优先 cmd，降级 pm）
 apps_raw=""
 if command -v cmd >/dev/null 2>&1; then
     apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null)

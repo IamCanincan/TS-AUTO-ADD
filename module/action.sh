@@ -1,7 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
 # action.sh - 手动同步工具
-# 功能：执行一次完整的应用列表同步和补丁日期更新
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -33,6 +32,7 @@ echo "[1/2] 正在提取与合并第三方应用包名..."
 mkdir -p "$(dirname "$TAA_SYS_FILE")"
 if [ ! -f "$TAA_SYS_FILE" ]; then
     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+    chmod 644 "$TAA_SYS_FILE"
 fi
 
 apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)

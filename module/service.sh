@@ -1,7 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
 # service.sh - 后台守护服务
-# 功能：监听应用列表和白名单文件变化，自动同步 target.txt，定期更新补丁日期
 #=============================================================================
 
 MODDIR="/data/adb/modules/ts-auto-add"
@@ -32,7 +31,7 @@ do_sync() {
     if [ ! -f "$TAA_SYS_FILE" ]; then
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
         chmod 644 "$TAA_SYS_FILE"
-        log_info "taa_sys.txt 已重建（缺失）"
+        log_info "taa_sys.txt 已创建（缺失）"
     fi
 
     {
@@ -48,21 +47,19 @@ do_sync() {
         if ! cmp -s "$TMP" "$TARGET"; then
             mv -f "$TMP" "$TARGET"
             chmod 644 "$TARGET"
-            log_info "target.txt 已同步刷新，行数: $(wc -l < "$TARGET")"
+            log_info "target.txt 已同步，行数: $(wc -l < "$TARGET")"
         else
             rm -f "$TMP"
         fi
     else
         rm -f "$TMP"
     fi
-    
     update_module_status "$PROP_FILE" "$BASE" "$PATCH_CONFIG_FILE"
 }
 
 dispatch_sync() {
     touch "$PENDING"
     acquire_lock "$LOCK_DIR" || { log_err "获取锁失败"; rm -f "$PENDING"; return 1; }
-    # 合并短时间内的多次触发，延迟 0.1 秒
     while [ -f "$PENDING" ]; do
         rm -f "$PENDING"
         sleep 0.1
@@ -98,7 +95,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# 监控 packages.list（使用 inotify）
+# 监控 packages.list
 start_monitor_pkg() {
     (
         while true; do
@@ -114,7 +111,7 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# 监控 taa_sys.txt（新路径位于内部存储，支持 inotify）
+# 监控 taa_sys.txt（与 packages.list 方式完全相同）
 start_monitor_sys() {
     (
         while true; do
@@ -122,17 +119,11 @@ start_monitor_sys() {
             if [ ! -f "$TAA_SYS_FILE" ]; then
                 printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
                 chmod 644 "$TAA_SYS_FILE"
-                log_info "taa_sys.txt 初始创建"
+                log_info "taa_sys.txt 已创建（初始）"
                 dispatch_sync
             fi
-            
-            inotifyd - "$TAA_SYS_FILE:wyc" 2>/dev/null | while read -r event; do
-                log_info "taa_sys.txt 事件触发: $event"
-                if [ ! -f "$TAA_SYS_FILE" ]; then
-                    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-                    chmod 644 "$TAA_SYS_FILE"
-                    log_info "taa_sys.txt 已重建"
-                fi
+            inotifyd - "$TAA_SYS_FILE:w" 2>/dev/null | while read -r _; do
+                log_info "检测到 taa_sys.txt 变化"
                 dispatch_sync
             done
             sleep 2
