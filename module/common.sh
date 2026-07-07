@@ -3,7 +3,7 @@
 # 公共函数库
 #=============================================================================
 
-TAA_SYS_FILE="/data/misc/ts_auto_add/taa_sys.txt"
+TAA_SYS_FILE="/data/system/ts_auto_add/taa_sys.txt"
 LOG_FILE="/data/local/tmp/ts_auto.log"
 
 # ---------- 日志函数 ----------
@@ -12,13 +12,11 @@ log_info() {
     echo "$msg" >> "$LOG_FILE"
     logger -t TS-AUTO -p info "$*" 2>/dev/null
 }
-
 log_warn() {
     local msg="[WARN] $(date '+%Y-%m-%d %H:%M:%S') $*"
     echo "$msg" >> "$LOG_FILE"
     logger -t TS-AUTO -p warn "$*" 2>/dev/null
 }
-
 log_err() {
     local msg="[ERR] $(date '+%Y-%m-%d %H:%M:%S') $*"
     echo "$msg" >> "$LOG_FILE"
@@ -42,7 +40,6 @@ acquire_lock() {
     mkdir "$lock_dir" 2>/dev/null || return 1
     return 0
 }
-
 release_lock() {
     rmdir "$1" 2>/dev/null
 }
@@ -51,13 +48,11 @@ release_lock() {
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
-
 force_to_05() {
     local in_date="$1"
     [ -n "$in_date" ] || return
     case "$in_date" in *-01) echo "${in_date%-01}-05" ;; *) echo "$in_date" ;; esac
 }
-
 get_system_date() {
     force_to_05 "$(clean_date "$(getprop ro.build.version.security_patch)")"
 }

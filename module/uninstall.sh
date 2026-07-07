@@ -1,6 +1,8 @@
 #!/system/bin/sh
 #====================================================
 # 卸载清理脚本
+# 功能：终止后台进程，删除本模块生成的 PID、锁、
+#       临时文件及专属配置文件
 #====================================================
 
 BASE="/data/adb/tricky_store"
@@ -34,10 +36,11 @@ rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak"
 # 删除日志文件
 rm -f "/data/local/tmp/ts_auto.log"
 
-# 删除新目录下的 taa_sys.txt
-rm -rf "/data/misc/ts_auto_add"
+# 删除 taa_sys.txt 及其文件夹（新路径）
+rm -rf "/data/system/ts_auto_add"
 rm -f "$BASE/taa_sys.txt"
 
+# 删除属性注入脚本
 rm -f "/data/adb/service.d/taa_resetprop.sh"
 
 exit 0
