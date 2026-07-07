@@ -3,7 +3,7 @@
 # 公共函数库
 #=============================================================================
 
-TAA_SYS_FILE="/data/adb/tricky_store/taa_sys.txt"   # 移至模块目录
+TAA_SYS_FILE="/data/adb/tricky_store/taa_sys.txt"
 LOG_FILE="/data/local/tmp/ts_auto.log"
 
 # ---------- 日志函数 ----------
