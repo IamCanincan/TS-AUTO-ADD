@@ -29,10 +29,10 @@ echo "================================================"
 acquire_lock "$LOCK_DIR" || exit 1
 
 echo "[1/2] 正在提取与合并第三方应用包名..."
-mkdir -p "$(dirname "$TAA_SYS_FILE")"
 if [ ! -f "$TAA_SYS_FILE" ]; then
     printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-    chmod 644 "$TAA_SYS_FILE"
+    chmod 640 "$TAA_SYS_FILE"
+    chown root:root "$TAA_SYS_FILE" 2>/dev/null
 fi
 
 apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)

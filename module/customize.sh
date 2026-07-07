@@ -51,8 +51,12 @@ fi
 ui_print " "
 ui_print "[5/6] 执行首次应用列表同步"
 
-TAA_SYS_FILE="/data/system/ts_auto_add/taa_sys.txt"
-mkdir -p "$(dirname "$TAA_SYS_FILE")"
+TAA_SYS_FILE="/data/system/taa_sys.list"
+if [ ! -f "$TAA_SYS_FILE" ]; then
+    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
+    chmod 640 "$TAA_SYS_FILE"
+    chown root:root "$TAA_SYS_FILE" 2>/dev/null
+fi
 
 apps_raw=""
 if command -v cmd >/dev/null 2>&1; then
@@ -60,11 +64,6 @@ if command -v cmd >/dev/null 2>&1; then
 fi
 if [ -z "$apps_raw" ] && command -v pm >/dev/null 2>&1; then
     apps_raw=$(pm list packages -3 2>/dev/null)
-fi
-
-if [ ! -f "$TAA_SYS_FILE" ]; then
-    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE"
-    chmod 644 "$TAA_SYS_FILE"
 fi
 
 {

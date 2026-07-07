@@ -3,10 +3,10 @@
 # 公共函数库
 #=============================================================================
 
-TAA_SYS_FILE="/data/system/ts_auto_add/taa_sys.txt"
+TAA_SYS_FILE="/data/system/taa_sys.list"
 LOG_FILE="/data/local/tmp/ts_auto.log"
 
-# ---------- 日志函数（直接写入文件，同时尝试 logger） ----------
+# ---------- 日志函数 ----------
 log_info() {
     local msg="[INFO] $(date '+%Y-%m-%d %H:%M:%S') $*"
     echo "$msg" >> "$LOG_FILE" 2>/dev/null
