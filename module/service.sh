@@ -81,7 +81,6 @@ rm -rf "$LOCK_DIR"
 
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
 
-# 首次同步
 dispatch_sync
 
 # ---------- 核心守护线程 ----------
@@ -95,7 +94,7 @@ dispatch_sync
 ) &
 PATCH_PID=$!
 
-# [2] 应用安装监听：完全照搬你原版验证成功的逻辑与单文件写法
+# [2] 应用安装监听：完全照搬你原版验证成功的逻辑！绝对不改！
 start_monitor_pkg() {
     (
         while true; do
@@ -110,23 +109,24 @@ start_monitor_pkg() {
 }
 MONITOR1_PID=$(start_monitor_pkg)
 
-# [3] 白名单配置监听：采用单文件单写事件监听，但加入“断线重连机制”
-# 一旦文件被替换导致监听流关闭，循环会立即重新启动 inotifyd，绑定全新生成的文件节点
+# [3] 白名单配置监听：回归原版不会报错的 wyc 参数，并加入极简拦截器
 start_monitor_sys() {
     (
         while true; do
+            mkdir -p "$BASE"
             [ -f "$TAA_SYS_FILE" ] || touch "$TAA_SYS_FILE"
-            chmod 644 "$TAA_SYS_FILE"
             
-            # 仅使用最基本的 :w 事件，确保 100% 被你的 toybox/busybox 兼容
-            inotifyd - "$TAA_SYS_FILE:w" 2>/dev/null | while read -r _; do
-                dispatch_sync
+            # wyc (写入/移动到/创建) 是原脚本验证过，你的底层系统绝对支持的参数
+            inotifyd - "$BASE:wyc" 2>/dev/null | while read -r event file_name; do
+                # 过滤机制：只要抛出事件的文件名里包含 taa_sys.txt，就立即同步。
+                # 如果是脚本自己生成的 target.txt 或者 .ts_tmp，直接无视掉（完美解决死循环耗电）。
+                case "$file_name" in
+                    *"taa_sys.txt"*)
+                        dispatch_sync
+                        ;;
+                esac
             done
-            
-            # 当编辑器通过“先删后建”保存文件时，上方的 inotifyd 会直接退出并走到这一步
-            # 我们在这里触发一次同步，并稍作延迟后重新循环挂载新文件的监听
-            dispatch_sync
-            sleep 1
+            sleep 2
         done
     ) &
     echo $!
