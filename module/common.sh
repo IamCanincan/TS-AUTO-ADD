@@ -1,13 +1,13 @@
 #!/system/bin/sh
 #=============================================================================
-# 公共函数库 (纯事件驱动版)
+# 公共函数库 (事件驱动版)
 #=============================================================================
 
 TAA_SYS_FILE="/data/adb/tricky_store/taa_sys.txt"
 LOG_FILE="/data/local/tmp/ts_auto.log"
 LOCK_TIMEOUT=15
 
-# ---------- 日志函数 ----------
+# ---------- 日志记录 ----------
 log_info() {
     local msg="[INFO] $(date '+%Y-%m-%d %H:%M:%S') $*"
     echo "$msg" >> "$LOG_FILE" 2>/dev/null
@@ -24,7 +24,7 @@ log_err() {
     logger -t TS-AUTO -p err "$*" 2>/dev/null || true
 }
 
-# ---------- 锁与状态初始化 ----------
+# ---------- 并发锁管理 ----------
 acquire_lock() {
     local lock_dir="$1"
     local waited=0
@@ -35,7 +35,7 @@ acquire_lock() {
         sleep 1
         waited=$((waited + 1))
     done
-    log_warn "锁获取超时，强制清理残留锁: $lock_dir"
+    log_warn "锁获取超时，清理遗留锁目录: $lock_dir"
     rmdir "$lock_dir" 2>/dev/null
     mkdir "$lock_dir" 2>/dev/null || return 1
     return 0
@@ -55,7 +55,7 @@ ensure_taa_sys() {
     fi
 }
 
-# ---------- 日期处理 ----------
+# ---------- 日期解析与处理 ----------
 clean_date() {
     echo "$1" | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n 1
 }
@@ -93,7 +93,7 @@ pick_newer() {
     [ "$(echo "$d1" | tr -d '-')" -ge "$(echo "$d2" | tr -d '-')" ] && echo "$d1" || echo "$d2"
 }
 
-# ---------- 安全替换 module.prop ----------
+# ---------- 模块配置更新 ----------
 update_module_prop() {
     local prop_file="$1" new_desc="$2"
     [ -f "$prop_file" ] || return 1
@@ -107,14 +107,15 @@ update_module_prop() {
     return 1
 }
 
-# ---------- 网络检测 ----------
+# ---------- 连通性检测 ----------
 is_network_available() {
+    ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1 && return 0
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 && return 0
     grep -q '^default' /proc/net/route 2>/dev/null && return 0
     return 1
 }
 
-# ---------- 动态查找 inotify 工具 (无轮询降级) ----------
+# ---------- inotify 工具定位 ----------
 find_inotify_cmd() {
     for cmd in "inotifywait" "/data/adb/magisk/busybox inotifywait" "/data/adb/ksu/bin/busybox inotifywait"; do
         if command -v ${cmd%% *} >/dev/null 2>&1; then
@@ -135,11 +136,11 @@ find_inotify_cmd() {
     return 1
 }
 
-# ---------- 更新安全补丁核心 ----------
+# ---------- 安全补丁更新核心 ----------
 update_security_patch_core() {
     local base_dir="$1" patch_config="$2" cache_file="$3" prop_file="$4" force_mode="${5:-0}"
     local system_date=$(get_system_date)
-    [ -z "$system_date" ] && { log_err "无法获取系统安全补丁日期"; return 1; }
+    [ -z "$system_date" ] && { log_err "获取系统安全补丁日期失败"; return 1; }
     
     local sys_ym="${system_date%-*}"
     local need_online=0
@@ -180,7 +181,7 @@ update_security_patch_core() {
     return 0
 }
 
-# ---------- 获取补丁三部分日期 ----------
+# ---------- 提取补丁日期 ----------
 get_patch_details() {
     local patch_file="$1"
     local sys_date="未知" boot_date="未知" ven_date="未知"

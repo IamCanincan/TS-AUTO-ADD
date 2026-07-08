@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 纯事件驱动后台守护 (无轮询)
+# service.sh - 事件驱动后台守护
 #=============================================================================
 
 MODDIR="${0%/*}"
@@ -20,43 +20,35 @@ PIDS_FILE="${BASE}/.ts_daemon_pids.list"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/common.sh" || exit 1
 
-# ---------- 强制检测 inotify ----------
+# ---------- inotify 依赖检查 ----------
 INOTIFY_INFO=$(find_inotify_cmd)
 if [ -z "$INOTIFY_INFO" ]; then
-    log_err "未找到 inotify 工具，该设备不支持事件驱动，服务退出。"
+    log_err "未找到 inotify 工具，服务退出。"
     exit 1
 fi
 INOTIFY_MODE="${INOTIFY_INFO%%:*}"
 INOTIFY_CMD="${INOTIFY_INFO#*:}"
-log_info "使用 inotify 工具: ${INOTIFY_CMD%% *} (模式: $INOTIFY_MODE)"
+log_info "初始化 inotify: ${INOTIFY_CMD%% *} (模式: $INOTIFY_MODE)"
 
-# ---------- 同步核心逻辑 ----------
+# ---------- 列表同步核心 ----------
 do_sync() {
-    log_info "执行列表同步..."
+    log_info "开始应用列表同步..."
     mkdir -p "$BASE" 2>/dev/null
     ensure_taa_sys "$TAA_SYS_FILE"
 
-    # 获取第三方应用列表
     local apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
-    local user_list=$(echo "$apps_raw" | sed -n 's/^package://p' | sort -u)
+    local user_list=$(echo "$apps_raw" | sed -n 's/^package://p')
     local user_count=$(echo "$user_list" | sed '/^$/d' | wc -l)
-    
-    # 读取系统白名单
-    local sys_list=$(cat "$TAA_SYS_FILE" 2>/dev/null | sort -u)
-    local sys_count=$(echo "$sys_list" | sed '/^$/d' | wc -l)
+    local sys_count=$(cat "$TAA_SYS_FILE" 2>/dev/null | sed '/^$/d' | wc -l)
 
-    # 合并并去重
-    {
-        echo "$sys_list"
-        echo ""
-        echo "$user_list"
-    } | sort -u | sed '/^$/d' > "$TMP" 2>/dev/null
+    # 通过输出流合并数据
+    (cat "$TAA_SYS_FILE" 2>/dev/null; echo "$user_list") | sort -u | sed '/^$/d' > "$TMP" 2>/dev/null
 
     if [ -s "$TMP" ]; then
         if ! cmp -s "$TMP" "$TARGET" 2>/dev/null; then
             mv -f "$TMP" "$TARGET" 2>/dev/null
             chmod 644 "$TARGET" 2>/dev/null
-            log_info "同步完成，系统应用: $sys_count，用户应用: $user_count"
+            log_info "同步完成。系统应用: $sys_count，用户应用: $user_count"
         else
             rm -f "$TMP" 2>/dev/null
         fi
@@ -64,13 +56,14 @@ do_sync() {
         rm -f "$TMP" 2>/dev/null
     fi
 
-    # 更新模块描述
+    # 描述文件更新
     local patch_desc=$(get_patch_details "$PATCH_CONFIG_FILE")
-    local new_desc="[系统: ${sys_count} | 用户: ${user_count} | 补丁: ${patch_desc}]"
+    local current_time=$(date '+%H:%M')
+    local new_desc="[系统: ${sys_count} | 用户: ${user_count} | 补丁: ${patch_desc} | 更新: ${current_time}]"
     update_module_prop "$PROP_FILE" "$new_desc"
 }
 
-# 防抖调度 (窗口 2 秒)
+# 防抖调度控制 (延迟: 2秒)
 dispatch_sync() {
     if mkdir "$DEBOUNCE_LOCK" 2>/dev/null; then
         (
@@ -83,62 +76,54 @@ dispatch_sync() {
     fi
 }
 
-# ---------- 初始化清理 ----------
+# ---------- 状态重置 ----------
 if [ -f "$PIDS_FILE" ]; then
     while read -r pid; do
-        [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
+        # 验证进程有效性后关闭
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null
+        fi
     done < "$PIDS_FILE"
     rm -f "$PIDS_FILE" 2>/dev/null
 fi
 rm -rf "$TMP" "$LOCK_DIR" "$DEBOUNCE_LOCK" 2>/dev/null
 
-# 等待系统启动完成
 until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
 
-log_info "系统启动完毕，触发首次同步"
+log_info "启动阶段检测完成，执行首次同步"
 dispatch_sync
 
-# ---------- 守护进程下发 ----------
-# 任务1: 安全补丁自动更新 (6小时周期，非文件轮询)
+# ---------- 守护进程任务 ----------
+# 任务1: 安全补丁更新 (周期任务)
 (
     while true; do
         if is_network_available; then
             update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0
-            # 补丁更新后刷新模块描述（无需再次同步，但需更新描述中的补丁日期）
-            # 直接调用 do_sync 会重复获取列表，可单独更新描述，但简单起见调用 do_sync（因内容未变会跳过写入，但会刷新描述）
             do_sync
             sleep 21600
         else
-            log_info "网络不可用，补丁更新推迟至12小时后"
+            log_info "网络状态不可用，推迟补丁更新"
             sleep 43200
         fi
     done
 ) &
 echo $! >> "$PIDS_FILE"
 
-# 监控函数 (inotifywait)
 start_inotifywait_monitor() {
-    local cmd="$1"
-    local watch_path="$2"
+    local cmd="$1" watch_path="$2"
     $cmd -m -e modify -e create -e delete "$watch_path" 2>/dev/null | while read -r line; do
-        case "$line" in
-            *packages.list*) dispatch_sync ;;
-        esac
+        case "$line" in *packages.list*) dispatch_sync ;; esac
     done
 }
 
-# 监控函数 (inotifyd)
 start_inotifyd_monitor() {
-    local cmd="$1"
-    local watch_path="$2"
+    local cmd="$1" watch_path="$2"
     $cmd - "$watch_path:wc" 2>/dev/null | while read -r event file; do
-        case "$file" in
-            *packages.list*) dispatch_sync ;;
-        esac
+        case "$file" in *packages.list*) dispatch_sync ;; esac
     done
 }
 
-# 任务2: 监控 /data/system 目录 (捕获 packages.list 变更)
+# 任务2: 系统文件变更监控
 (
     while true; do
         [ -d "$WATCH_DIR" ] || { sleep 5; continue; }
@@ -147,12 +132,12 @@ start_inotifyd_monitor() {
         else
             start_inotifyd_monitor "$INOTIFY_CMD" "$WATCH_DIR"
         fi
-        sleep 3  # 仅用于子进程意外退出后的自愈重启，非轮询检测
+        sleep 3
     done
 ) &
 echo $! >> "$PIDS_FILE"
 
-# 任务3: 监控 taa_sys.txt 文件
+# 任务3: 模块配置文件变更监控
 (
     while true; do
         ensure_taa_sys "$TAA_SYS_FILE"
@@ -165,10 +150,10 @@ echo $! >> "$PIDS_FILE"
                 dispatch_sync
             done
         fi
-        sleep 3  # 自愈重启
+        sleep 3
     done
 ) &
 echo $! >> "$PIDS_FILE"
 
-log_info "事件驱动守护进程组下发完毕，主进程退出。"
+log_info "守护进程就绪，主进程退出"
 exit 0
