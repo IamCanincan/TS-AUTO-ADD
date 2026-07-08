@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# service.sh - 纯事件驱动后台守护
+# service.sh - 纯事件驱动后台守护 (无轮询)
 #=============================================================================
 
 MODDIR="${0%/*}"
@@ -36,31 +36,38 @@ do_sync() {
     mkdir -p "$BASE" 2>/dev/null
     ensure_taa_sys "$TAA_SYS_FILE"
 
+    # 获取第三方应用列表
     local apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
+    local user_list=$(echo "$apps_raw" | sed -n 's/^package://p' | sort -u)
+    local user_count=$(echo "$user_list" | sed '/^$/d' | wc -l)
     
+    # 读取系统白名单
+    local sys_list=$(cat "$TAA_SYS_FILE" 2>/dev/null | sort -u)
+    local sys_count=$(echo "$sys_list" | sed '/^$/d' | wc -l)
+
+    # 合并并去重
     {
-        cat "$TAA_SYS_FILE" 2>/dev/null
+        echo "$sys_list"
         echo ""
-        echo "$apps_raw" | sed -n 's/^package://p'
+        echo "$user_list"
     } | sort -u | sed '/^$/d' > "$TMP" 2>/dev/null
-    
+
     if [ -s "$TMP" ]; then
         if ! cmp -s "$TMP" "$TARGET" 2>/dev/null; then
             mv -f "$TMP" "$TARGET" 2>/dev/null
             chmod 644 "$TARGET" 2>/dev/null
-            log_info "同步完成，当前包数: $(wc -l < "$TARGET" 2>/dev/null || echo 0)"
+            log_info "同步完成，系统应用: $sys_count，用户应用: $user_count"
         else
             rm -f "$TMP" 2>/dev/null
         fi
     else
         rm -f "$TMP" 2>/dev/null
     fi
-    
-    local app_count=$(wc -l < "$TARGET" 2>/dev/null || echo 0)
-    local patch_date="未知"
-    [ -f "$PATCH_CONFIG_FILE" ] && patch_date=$(grep '^boot=' "$PATCH_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2)
-    [ -z "$patch_date" ] && patch_date="未配置"
-    update_module_prop "$PROP_FILE" "[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]"
+
+    # 更新模块描述
+    local patch_desc=$(get_patch_details "$PATCH_CONFIG_FILE")
+    local new_desc="[系统: ${sys_count} | 用户: ${user_count} | 补丁: ${patch_desc}]"
+    update_module_prop "$PROP_FILE" "$new_desc"
 }
 
 # 防抖调度 (窗口 2 秒)
@@ -97,6 +104,9 @@ dispatch_sync
     while true; do
         if is_network_available; then
             update_security_patch_core "$BASE" "$PATCH_CONFIG_FILE" "$PATCH_CACHE_FILE" "$PROP_FILE" 0
+            # 补丁更新后刷新模块描述（无需再次同步，但需更新描述中的补丁日期）
+            # 直接调用 do_sync 会重复获取列表，可单独更新描述，但简单起见调用 do_sync（因内容未变会跳过写入，但会刷新描述）
+            do_sync
             sleep 21600
         else
             log_info "网络不可用，补丁更新推迟至12小时后"

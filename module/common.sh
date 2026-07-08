@@ -116,7 +116,6 @@ is_network_available() {
 
 # ---------- 动态查找 inotify 工具 (无轮询降级) ----------
 find_inotify_cmd() {
-    # 优先 inotifywait
     for cmd in "inotifywait" "/data/adb/magisk/busybox inotifywait" "/data/adb/ksu/bin/busybox inotifywait"; do
         if command -v ${cmd%% *} >/dev/null 2>&1; then
             if ${cmd%% *} --help 2>&1 | grep -q -e '-m' -e '--monitor'; then
@@ -125,7 +124,6 @@ find_inotify_cmd() {
             fi
         fi
     done
-    # 降级 inotifyd
     for cmd in "inotifyd" "/data/adb/magisk/busybox inotifyd" "/data/adb/ksu/bin/busybox inotifyd"; do
         if command -v ${cmd%% *} >/dev/null 2>&1; then
             if ${cmd%% *} --help 2>&1 | grep -q 'inotifyd'; then
@@ -179,11 +177,17 @@ update_security_patch_core() {
     
     chmod 644 "${patch_config}.tmp" 2>/dev/null
     mv -f "${patch_config}.tmp" "$patch_config" 2>/dev/null || return 1
-
-    local app_count=0
-    [ -f "$base_dir/target.txt" ] && app_count=$(wc -l < "$base_dir/target.txt" 2>/dev/null || echo 0)
-    local patch_date="$final_date"
-    local new_desc="[应用数: ${app_count} | 补丁: ${patch_date} | 更新: $(date '+%H:%M')]"
-    update_module_prop "$prop_file" "$new_desc"
     return 0
+}
+
+# ---------- 获取补丁三部分日期 ----------
+get_patch_details() {
+    local patch_file="$1"
+    local sys_date="未知" boot_date="未知" ven_date="未知"
+    if [ -f "$patch_file" ]; then
+        sys_date=$(grep '^system=' "$patch_file" 2>/dev/null | cut -d'=' -f2)
+        boot_date=$(grep '^boot=' "$patch_file" 2>/dev/null | cut -d'=' -f2)
+        ven_date=$(grep '^vendor=' "$patch_file" 2>/dev/null | cut -d'=' -f2)
+    fi
+    echo "system=${sys_date:-未知} boot=${boot_date:-未知} vendor=${ven_date:-未知}"
 }
