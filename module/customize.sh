@@ -1,51 +1,52 @@
 #!/system/bin/sh
+#=============================================================================
+# TS-AUTO-ADD - 模块安装程序
+#=============================================================================
+
 SKIPUNZIP=0
 
 ui_print "================================================"
-ui_print "   TS-AUTO-ADD 安装程序"
+ui_print "          TS-AUTO-ADD 安装程序"
 ui_print "================================================"
 
-. "$MODPATH/common.sh" 2>/dev/null || abort "无法加载 common.sh"
+. "$MODPATH/common.sh" 2>/dev/null || abort "[ERROR] 无法加载 common.sh"
 
 ui_print " "
-ui_print "[1/6] 检查 inotify 支持状态"
+ui_print "[1/5] 检查系统环境依赖"
 INOTIFY_INFO=$(find_inotify_cmd)
 if [ -z "$INOTIFY_INFO" ]; then
-    abort "  错误: 未检测到系统提供 inotify 支持 (inotifywait/inotifyd)。"
+    abort "[ERROR] 未检测到系统提供的 inotify 监控工具"
 fi
-INOTIFY_MODE="${INOTIFY_INFO%%:*}"
-INOTIFY_CMD="${INOTIFY_INFO#*:}"
-ui_print "  可用监控组件: ${INOTIFY_CMD%% *} ($INOTIFY_MODE)"
+ui_print "  可用监控组件: ${INOTIFY_INFO#*:}"
 
 ui_print " "
-ui_print "[2/6] 初始化工作目录"
-BASE_DIR="/data/adb/tricky_store"
-mkdir -p "$BASE_DIR" 2>/dev/null || abort "  无法创建目录 $BASE_DIR"
+ui_print "[2/5] 初始化目标工作目录"
+TS_BASE="/data/adb/tricky_store"
+TEESIM_BASE="/data/adb/teesim"
+mkdir -p "$TS_BASE" "$TEESIM_BASE" 2>/dev/null
 
-if [ ! -f "$BASE_DIR/target.txt" ]; then
-    touch "$BASE_DIR/target.txt" 2>/dev/null
-    chmod 644 "$BASE_DIR/target.txt" 2>/dev/null
+if [ ! -f "$TS_BASE/target.txt" ]; then
+    touch "$TS_BASE/target.txt" 2>/dev/null
+    chmod 644 "$TS_BASE/target.txt" 2>/dev/null
 fi
-ui_print "  工作目录设置完毕"
 
 ui_print " "
-ui_print "[3/6] 配置脚本权限"
+ui_print "[3/5] 配置文件与脚本权限"
 set_perm_recursive "$MODPATH" 0 0 0755 0644 || true
-chmod 0755 "$MODPATH/service.sh" 2>/dev/null
-chmod 0755 "$MODPATH/action.sh" 2>/dev/null
+chmod 0755 "$MODPATH/service.sh" "$MODPATH/action.sh" 2>/dev/null
 
-ui_print " "
-ui_print "[4/6] 清理旧版文件"
-rm -rf "$BASE_DIR/.ts_lock" "$BASE_DIR/.ts_debounce" "$BASE_DIR/.ts_tmp" "$BASE_DIR"/.ts_daemon*.pid 2>/dev/null
-
-ui_print " "
-ui_print "[5/6] 运行初始列表生成"
-TAA_SYS_FILE="$BASE_DIR/taa_sys.txt"
-if [ ! -f "$TAA_SYS_FILE" ]; then
-    printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$TAA_SYS_FILE" 2>/dev/null
-    chmod 640 "$TAA_SYS_FILE" 2>/dev/null
-    chown root:root "$TAA_SYS_FILE" 2>/dev/null
+if [ -f "$MODPATH/taa_resetprop.sh" ]; then
+    mkdir -p /data/adb/service.d 2>/dev/null
+    cp -f "$MODPATH/taa_resetprop.sh" "/data/adb/service.d/taa_resetprop.sh" 2>/dev/null
+    chmod 0755 "/data/adb/service.d/taa_resetprop.sh" 2>/dev/null
+    rm -f "$MODPATH/taa_resetprop.sh" 2>/dev/null
+    ui_print "  系统属性注入脚本部署完成"
 fi
+
+ui_print " "
+ui_print "[4/5] 生成初始配置数据"
+TAA_SYS_FILE="$TS_BASE/taa_sys.txt"
+ensure_taa_sys "$TAA_SYS_FILE"
 
 apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
 user_list=$(echo "$apps_raw" | sed -n 's/^package://p')
@@ -55,42 +56,25 @@ sys_count=$(cat "$TAA_SYS_FILE" 2>/dev/null | sed '/^$/d' | wc -l)
 ui_print "  系统白名单项数: $sys_count"
 ui_print "  第三方应用项数: $user_count"
 
-(cat "$TAA_SYS_FILE" 2>/dev/null; echo "$user_list") | sort -u | sed '/^$/d' > "$BASE_DIR/.ts_tmp" 2>/dev/null
+(cat "$TAA_SYS_FILE" 2>/dev/null; echo "$user_list") | sort -u | sed '/^$/d' > "$TS_BASE/.ts_tmp" 2>/dev/null
 
-if [ -s "$BASE_DIR/.ts_tmp" ]; then
-    mv -f "$BASE_DIR/.ts_tmp" "$BASE_DIR/target.txt" 2>/dev/null
-    chmod 644 "$BASE_DIR/target.txt" 2>/dev/null
-    ui_print "  数据写入完成。当前行数: $(wc -l < "$BASE_DIR/target.txt" 2>/dev/null || echo 0)"
+if [ -s "$TS_BASE/.ts_tmp" ]; then
+    cp -f "$TS_BASE/.ts_tmp" "$TS_BASE/target.txt" 2>/dev/null
+    chmod 644 "$TS_BASE/target.txt" 2>/dev/null
+
+    generate_teesim_json "$TS_BASE/.ts_tmp" "$TEESIM_BASE/config.json"
+    ui_print "  双格式目标数据写入完成"
 else
-    rm -f "$BASE_DIR/.ts_tmp" 2>/dev/null
-    ui_print "  当前结果集为空，推迟至守护进程处理"
+    ui_print "  未提取到应用数据，延迟至首次启动时处理"
 fi
-
-if [ -f "$MODPATH/taa_resetprop.sh" ]; then
-    mkdir -p /data/adb/service.d 2>/dev/null
-    cp -f "$MODPATH/taa_resetprop.sh" "/data/adb/service.d/taa_resetprop.sh" 2>/dev/null
-    chmod 0755 "/data/adb/service.d/taa_resetprop.sh" 2>/dev/null
-    rm -f "$MODPATH/taa_resetprop.sh" 2>/dev/null
-    ui_print "  属性注入脚本部署完成"
-fi
+rm -f "$TS_BASE/.ts_tmp" 2>/dev/null
 
 ui_print " "
-ui_print "[6/6] 生成模块属性信息"
-if [ ! -f "$BASE_DIR/security_patch.txt" ]; then
-    echo "system=未知" > "$BASE_DIR/security_patch.txt"
-    echo "boot=未知" >> "$BASE_DIR/security_patch.txt"
-    echo "vendor=未知" >> "$BASE_DIR/security_patch.txt"
-fi
-patch_desc=$(get_patch_details "$BASE_DIR/security_patch.txt")
+ui_print "[5/5] 更新模块描述"
 current_time=$(date '+%H:%M')
-new_desc="[系统: ${sys_count} | 用户: ${user_count} | 补丁: ${patch_desc} | 更新: ${current_time}]"
-sed "s/^description=.*/description=$new_desc/" "$MODPATH/module.prop" > "$MODPATH/module.prop.tmp" 2>/dev/null
-if [ $? -eq 0 ]; then
-    cat "$MODPATH/module.prop.tmp" > "$MODPATH/module.prop"
-    rm -f "$MODPATH/module.prop.tmp"
-    ui_print "  信息更新成功"
-fi
+new_desc="[系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
+update_module_prop "$MODPATH/module.prop" "$new_desc"
 
 ui_print "================================================"
-ui_print "  安装流程结束，需重启设备生效"
+ui_print "  安装完成，重启设备后生效"
 ui_print "================================================"
