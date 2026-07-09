@@ -4,12 +4,12 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'module/**' # 限制仅在 module 目录下的文件发生变动时触发
+      - 'module/**' # 触发条件：仅在 module 目录下的文件发生变动时执行
   pull_request:
     branches: [ "main" ]
     paths:
       - 'module/**'
-  workflow_dispatch: # 支持手动触发工作流
+  workflow_dispatch: # 触发条件：允许手动触发工作流
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,7 +32,7 @@ jobs:
 
           PROP_FILE="module/module.prop"
 
-          # 解析并清理 module.prop 中的 id 和 version 字段
+          # 提取并清理 module.prop 中的 id 与 version 字段
           MOD_ID=$(grep '^id=' "$PROP_FILE" | cut -d= -f2 | tr -d '\r ')
           ORIGINAL_VERSION=$(grep '^version=' "$PROP_FILE" | cut -d= -f2 | tr -d '\r ')
           
@@ -44,35 +44,29 @@ jobs:
           echo "注入版本号: $NEW_VERSION_CODE"
           echo "=========================================="
 
-          # 更新 version 属性：存在则替换，不存在则追加
+          # 配置 version 属性：字段存在则替换，不存在则追加
           if grep -q '^version=' "$PROP_FILE"; then
             sed -i "s/^version=.*/version=${NEW_VERSION}/" "$PROP_FILE"
           else
             echo "version=${NEW_VERSION}" >> "$PROP_FILE"
           fi
 
-          # 更新 versionCode 属性：存在则替换，不存在则追加
+          # 配置 versionCode 属性：字段存在则替换，不存在则追加
           if grep -q '^versionCode=' "$PROP_FILE"; then
             sed -i "s/^versionCode=.*/versionCode=${NEW_VERSION_CODE}/" "$PROP_FILE"
           else
             echo "versionCode=${NEW_VERSION_CODE}" >> "$PROP_FILE"
           fi
 
-          # 设置步骤输出供后续 Step 调用
+          # 将输出写入步骤变量，供后续步骤引用
           echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "mod_id=${MOD_ID}" >> $GITHUB_OUTPUT
-
-      - name: Pack Module to Zip
-        run: |
-          cd module
-          # 切换至目录内部打包以保持正确的目录级结构，并排除内部 zip 文件
-          zip -r ../${{ steps.version_info.outputs.mod_id }}-${{ steps.version_info.outputs.version }}.zip . -x "*.zip"
-          cd ..
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
+          # 设置 Artifact 名称，网页端下载时将作为自动生成的压缩包文件名
           name: ${{ steps.version_info.outputs.mod_id }}-${{ steps.version_info.outputs.version }}
-          # 精确指定上传的文件路径，不使用通配符
-          path: ${{ steps.version_info.outputs.mod_id }}-${{ steps.version_info.outputs.version }}.zip
+          # 指定上传目标为整个目录，GitHub 会将其内部文件结构直接映射至归档文件的根目录
+          path: module/
           retention-days: 30
