@@ -5,23 +5,29 @@
 
 MODDIR="${0%/*}"
 PROP_FILE="$MODDIR/module.prop"
-
-TS_BASE="/data/adb/tricky_store"
-TEESIM_BASE="/data/adb/teesim"
-TS_TARGET="$TS_BASE/target.txt"
-TEESIM_CONFIG="$TEESIM_BASE/config.json"
 WATCH_DIR="/data/system"
-
-TMP="${TS_BASE}/.ts_tmp"
-LOCK_DIR="${TS_BASE}/.ts_lock"
-DEBOUNCE_LOCK="${TS_BASE}/.ts_debounce"
-PIDS_FILE="${TS_BASE}/.ts_daemon_pids.list"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
 . "$MODDIR/common.sh" || exit 1
 
-# ---------- inotify 工具初始化 ----------
+# 环境判定
+detect_target_env
+env_status=$?
+
+if [ "$env_status" -eq 2 ]; then
+    log_err "冲突: 检测到 TrickyStore 与 TeeSimulator 同时存在，服务中止退出"
+    exit 1
+elif [ "$env_status" -eq 1 ]; then
+    log_err "未检测到 TrickyStore 或 TeeSimulator 环境，服务中止退出"
+    exit 1
+fi
+
+TMP="${TARGET_BASE}/.ts_tmp"
+LOCK_DIR="${TARGET_BASE}/.ts_lock"
+DEBOUNCE_LOCK="${TARGET_BASE}/.ts_debounce"
+PIDS_FILE="${TARGET_BASE}/.ts_daemon_pids.list"
+
 INOTIFY_INFO=$(find_inotify_cmd)
 if [ -z "$INOTIFY_INFO" ]; then
     log_err "未检测到可用的 inotify 组件，守护进程退出"
@@ -30,12 +36,12 @@ fi
 
 INOTIFY_MODE="${INOTIFY_INFO%%:*}"
 INOTIFY_CMD="${INOTIFY_INFO#*:}"
-log_info "初始化监控组件: ${INOTIFY_CMD%% *} ($INOTIFY_MODE)"
+log_info "目标环境: $TARGET_TYPE | 监控组件: ${INOTIFY_CMD%% *}"
 
-# ---------- 核心同步逻辑 ----------
+# 核心同步逻辑
 do_sync() {
     log_info "触发包名列表自动同步"
-    mkdir -p "$TS_BASE" "$TEESIM_BASE" 2>/dev/null
+    mkdir -p "$TARGET_BASE" 2>/dev/null
     ensure_taa_sys "$TAA_SYS_FILE"
 
     local apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
@@ -46,22 +52,15 @@ do_sync() {
     (cat "$TAA_SYS_FILE" 2>/dev/null; echo "$user_list") | sort -u | sed '/^$/d' > "$TMP" 2>/dev/null
 
     if [ -s "$TMP" ]; then
-        # 更新 TrickyStore 目标文件
-        cp -f "$TMP" "$TS_TARGET" 2>/dev/null
-        chmod 644 "$TS_TARGET" 2>/dev/null
-
-        # 更新 TeeSim 配置文件 (仅修改 apps 节点)
-        generate_teesim_json "$TMP" "$TEESIM_CONFIG"
-
-        log_info "同步完成 - 系统白名单: $sys_count，第三方应用: $user_count"
+        write_target_config "$TMP"
+        log_info "同步完成 ($TARGET_TYPE) - 系统白名单: $sys_count，第三方应用: $user_count"
     fi
     rm -f "$TMP" 2>/dev/null
 
     local current_time=$(date '+%H:%M')
-    update_module_prop "$PROP_FILE" "[系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
+    update_module_prop "$PROP_FILE" "[环境: ${TARGET_TYPE} | 系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
 }
 
-# 防抖调度机制
 dispatch_sync() {
     if mkdir "$DEBOUNCE_LOCK" 2>/dev/null; then
         (
@@ -74,7 +73,7 @@ dispatch_sync() {
     fi
 }
 
-# ---------- 状态重置与清理 ----------
+# 状态清理
 if [ -f "$PIDS_FILE" ]; then
     while read -r pid; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -89,10 +88,9 @@ until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do
     sleep 2
 done
 
-log_info "系统开机完成，执行首次同步"
+log_info "开机完成，执行首次同步"
 dispatch_sync
 
-# ---------- 监控任务配置 ----------
 # 任务 1: 系统应用包变更监听
 (
     while true; do
@@ -111,7 +109,7 @@ dispatch_sync
 ) &
 echo $! >> "$PIDS_FILE"
 
-# 任务 2: 模块内置系统白名单文件监听
+# 任务 2: 模块系统白名单文件监听
 (
     while true; do
         ensure_taa_sys "$TAA_SYS_FILE"
@@ -129,5 +127,5 @@ echo $! >> "$PIDS_FILE"
 ) &
 echo $! >> "$PIDS_FILE"
 
-log_info "后台守护进程已运行"
+log_info "守护进程运行中"
 exit 0

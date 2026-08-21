@@ -5,9 +5,37 @@
 
 TS_BASE="/data/adb/tricky_store"
 TEESIM_BASE="/data/adb/teesim"
-TAA_SYS_FILE="$TS_BASE/taa_sys.txt"
 LOG_FILE="/data/adb/ts_auto.log"
 LOCK_TIMEOUT=15
+
+TARGET_TYPE=""
+TARGET_BASE=""
+TAA_SYS_FILE=""
+
+# ---------- 环境与冲突检测 ----------
+detect_target_env() {
+    local ts_exist=0
+    local teesim_exist=0
+
+    { [ -d "$TS_BASE" ] || [ -d "/data/adb/modules/tricky_store" ] || [ -d "/data/adb/modules_update/tricky_store" ]; } && ts_exist=1
+    { [ -d "$TEESIM_BASE" ] || [ -d "/data/adb/modules/teesim" ] || [ -d "/data/adb/modules_update/teesim" ]; } && teesim_exist=1
+
+    if [ "$ts_exist" -eq 1 ] && [ "$teesim_exist" -eq 1 ]; then
+        return 2 # 冲突: 两者同时存在
+    elif [ "$ts_exist" -eq 1 ]; then
+        TARGET_TYPE="TS"
+        TARGET_BASE="$TS_BASE"
+        TAA_SYS_FILE="$TS_BASE/taa_sys.txt"
+        return 0
+    elif [ "$teesim_exist" -eq 1 ]; then
+        TARGET_TYPE="TEESIM"
+        TARGET_BASE="$TEESIM_BASE"
+        TAA_SYS_FILE="$TEESIM_BASE/taa_sys.txt"
+        return 0
+    else
+        return 1 # 未检测到任何目标环境
+    fi
+}
 
 # ---------- 日志输出函数 ----------
 log_info() {
@@ -43,7 +71,7 @@ release_lock() {
     rmdir "$1" 2>/dev/null || true
 }
 
-# ---------- 系统白名单基础配置 ----------
+# ---------- 系统白名单初始化 ----------
 ensure_taa_sys() {
     local file="$1"
     if [ ! -f "$file" ]; then
@@ -53,7 +81,7 @@ ensure_taa_sys() {
     fi
 }
 
-# ---------- 模块属性配置修改 ----------
+# ---------- 模块描述更新 ----------
 update_module_prop() {
     local prop_file="$1"
     local new_desc="$2"
@@ -63,7 +91,7 @@ update_module_prop() {
     fi
 }
 
-# ---------- inotify 监控指令检测 ----------
+# ---------- inotify 指令查找 ----------
 find_inotify_cmd() {
     local cmd=""
 
@@ -88,7 +116,7 @@ find_inotify_cmd() {
     return 1
 }
 
-# ---------- TeeSim config.json 应用节点增量更新 ----------
+# ---------- TeeSim config.json 应用节点更新 ----------
 generate_teesim_json() {
     local pkg_list_file="$1"
     local json_file="$2"
@@ -159,4 +187,16 @@ EOF
 
     chmod 644 "$json_file" 2>/dev/null
     rm -f "$formatted_apps_file" "${json_file}.tmp" 2>/dev/null
+}
+
+# ---------- 目标环境配置写入 ----------
+write_target_config() {
+    local pkg_list_tmp="$1"
+
+    if [ "$TARGET_TYPE" = "TS" ]; then
+        cp -f "$pkg_list_tmp" "$TS_BASE/target.txt" 2>/dev/null
+        chmod 644 "$TS_BASE/target.txt" 2>/dev/null
+    elif [ "$TARGET_TYPE" = "TEESIM" ]; then
+        generate_teesim_json "$pkg_list_tmp" "$TEESIM_BASE/config.json"
+    fi
 }

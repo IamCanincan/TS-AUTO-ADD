@@ -6,14 +6,6 @@
 MODDIR="${0%/*}"
 PROP_FILE="$MODDIR/module.prop"
 
-TS_BASE="/data/adb/tricky_store"
-TEESIM_BASE="/data/adb/teesim"
-TS_TARGET="$TS_BASE/target.txt"
-TEESIM_CONFIG="$TEESIM_BASE/config.json"
-
-LOCK_DIR="$TS_BASE/.ts_lock"
-TMP="$TS_BASE/.ts_tmp"
-
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
 . "$MODDIR/common.sh" || {
@@ -30,11 +22,28 @@ echo "================================================"
 echo "          TS-AUTO-ADD 手动同步工具"
 echo "================================================"
 
+# 环境判定
+detect_target_env
+env_status=$?
+
+if [ "$env_status" -eq 2 ]; then
+    echo "[ERROR] 检测到 TrickyStore 与 TeeSimulator 同时存在，拒绝执行同步" >&2
+    exit 1
+elif [ "$env_status" -eq 1 ]; then
+    echo "[ERROR] 未检测到 TrickyStore 或 TeeSimulator 环境" >&2
+    exit 1
+fi
+
+LOCK_DIR="$TARGET_BASE/.ts_lock"
+TMP="$TARGET_BASE/.ts_tmp"
+
 acquire_lock "$LOCK_DIR" || exit 1
 
-echo "[1/2] 正在提取与合并包名列表..."
+echo "[1/2] 目标环境: $TARGET_TYPE"
+echo "      配置文件路径: $TARGET_BASE"
+
 ensure_taa_sys "$TAA_SYS_FILE"
-mkdir -p "$TS_BASE" "$TEESIM_BASE" 2>/dev/null
+mkdir -p "$TARGET_BASE" 2>/dev/null
 
 apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
 user_list=$(echo "$apps_raw" | sed -n 's/^package://p')
@@ -47,25 +56,18 @@ echo "  第三方应用项数: $user_count"
 (cat "$TAA_SYS_FILE" 2>/dev/null; echo "$user_list") | sort -u | sed '/^$/d' > "$TMP" 2>/dev/null
 
 if [ -s "$TMP" ]; then
-    # 写入 TrickyStore 配置
-    cp -f "$TMP" "$TS_TARGET" 2>/dev/null
-    chmod 644 "$TS_TARGET" 2>/dev/null
-    echo "[INFO] TrickyStore target.txt 更新成功"
-
-    # 写入 TeeSim 配置 (仅更新 apps 节点)
-    generate_teesim_json "$TMP" "$TEESIM_CONFIG"
-    echo "[INFO] TeeSim config.json 更新成功"
-
+    write_target_config "$TMP"
+    echo "[INFO] 目标配置文件更新完成"
     rm -f "$TMP" 2>/dev/null
 else
     rm -f "$TMP" 2>/dev/null
-    echo "[ERROR] 获取应用列表失败，操作中止"
+    echo "[ERROR] 获取应用列表失败"
 fi
 
 echo ""
 echo "[2/2] 更新模块描述信息..."
 current_time=$(date '+%H:%M')
-new_desc="[系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
+new_desc="[环境: ${TARGET_TYPE} | 系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
 
 if update_module_prop "$PROP_FILE" "$new_desc"; then
     echo "[INFO] 模块描述更新成功"
