@@ -8,6 +8,7 @@ log_force "========== TS-AUTO-ADD 服务启动 =========="
 log_force "PID: $$, 时间: $(date)"
 
 MODDIR="${0%/*}"
+export MODDIR
 PROP_FILE="$MODDIR/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
@@ -27,6 +28,8 @@ if [ -f "$MODDIR/lib/common.sh" ]; then
         detect_target_env() { return 3; }
         find_inotify_cmd() { return 1; }
         with_debounce() { log_warn "with_debounce 未定义"; }
+        do_sync() { log_warn "do_sync 未定义"; }
+        ensure_taa_sys() { return 0; }
     fi
 else
     log_force "common.sh 不存在"
@@ -37,6 +40,8 @@ else
     detect_target_env() { return 3; }
     find_inotify_cmd() { return 1; }
     with_debounce() { log_warn "with_debounce 未定义"; }
+    do_sync() { log_warn "do_sync 未定义"; }
+    ensure_taa_sys() { return 0; }
 fi
 
 # 清理残留文件（若有变量未定义则忽略）
@@ -54,7 +59,7 @@ until [ "$(getprop sys.boot_completed)" = "1" ]; do
 done
 log_force "系统已启动"
 
-# 定义启动函数（若 common.sh 已定义 start_daemon 则覆盖，但为了安全，我们直接写循环）
+# 定义启动函数
 start_daemon() {
     log_info "尝试启动守护进程..."
     detect_target_env
@@ -123,6 +128,7 @@ start_daemon() {
     ) &
     pid2=$!
 
+    pids_file="$TARGET_BASE/.ts_daemon_pids.list"
     echo "$pid1" > "$pids_file"
     echo "$pid2" >> "$pids_file"
     log_info "守护进程已启动 (PID: $pid1, $pid2)"
