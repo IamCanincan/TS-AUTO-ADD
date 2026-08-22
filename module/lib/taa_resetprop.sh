@@ -1,8 +1,5 @@
 #!/system/bin/sh
-#==============================================================================
-# taa_resetprop.sh - 系统属性重置（锁定/正式版状态）
-#==============================================================================
-
+# 系统属性重置
 command -v resetprop >/dev/null 2>&1 || exit 0
 [ -f "/data/adb/disable_prop_handler" ] && exit 0
 
@@ -11,20 +8,17 @@ check_reset_prop() {
     current="$(resetprop "$key" 2>/dev/null)"
     [ -z "$current" ] || [ "$current" != "$expected" ] && resetprop -n "$key" "$expected" 2>/dev/null
 }
-
 contains_reset_prop() {
     local key="$1" match="$2" target="$3" current
     current="$(resetprop "$key" 2>/dev/null)"
     case "$current" in *"$match"*) resetprop -n "$key" "$target" 2>/dev/null ;; esac
 }
-
 empty_reset_prop() {
     local key="$1" target="$2" current
     current="$(getprop "$key" 2>/dev/null)"
     [ -z "$current" ] && resetprop -n "$key" "$target" 2>/dev/null
 }
 
-# ---------- Boot Hash ----------
 fetch_boot_hash() {
     local hash
     if [ -r "/proc/cmdline" ]; then
@@ -39,11 +33,9 @@ fetch_boot_hash() {
     [ "${#hash}" -eq 64 ] && echo "$hash" && return 0
     return 1
 }
-
 detected_hash="$(fetch_boot_hash)"
 [ -n "$detected_hash" ] && check_reset_prop "ro.boot.vbmeta.digest" "$detected_hash"
 
-# ---------- 基础验证属性 ----------
 check_reset_prop "ro.boot.vbmeta.device_state"               "locked"
 check_reset_prop "ro.boot.verifiedbootstate"                 "green"
 check_reset_prop "ro.boot.flash.locked"                      "1"
@@ -69,7 +61,6 @@ check_reset_prop "vendor.boot.vbmeta.device_state"           "locked"
 check_reset_prop "vendor.boot.verifiedbootstate"             "green"
 check_reset_prop "vendor.boot.veritymode"                    "enforcing"
 
-# ---------- 厂商特定 ----------
 check_reset_prop "ro.secureboot.lockstate"                   "locked"
 check_reset_prop "ro.boot.realmebootstate"                   "green"
 check_reset_prop "ro.boot.realme.lockstate"                  "1"
@@ -79,7 +70,6 @@ check_reset_prop "ro.boot.is_ever_orange"                    "0"
 check_reset_prop "ro.boot.hw.is_ever_orange"                 "0"
 check_reset_prop "ro.boot.orange.state"                      "0"
 
-# ---------- 启动模式与构建标签 ----------
 contains_reset_prop "ro.bootmode"                 "recovery" "normal"
 contains_reset_prop "ro.boot.bootmode"            "recovery" "normal"
 contains_reset_prop "ro.vendor.boot.bootmode"     "recovery" "normal"
@@ -94,14 +84,12 @@ for prop in $(resetprop | grep -oE 'ro.*\.build\.type' 2>/dev/null); do
     check_reset_prop "$prop" "user"
 done
 
-# ---------- VBMeta 补全 ----------
 empty_reset_prop "ro.boot.vbmeta.device_state"               "locked"
 empty_reset_prop "ro.boot.vbmeta.invalidate_on_error"        "yes"
 empty_reset_prop "ro.boot.vbmeta.avb_version"                "1.2"
 empty_reset_prop "ro.boot.vbmeta.hash_alg"                   "sha256"
 empty_reset_prop "ro.boot.vbmeta.size"                       "4096"
 
-# ---------- 清理 Flavor 与 OEM ----------
 resetprop -n ro.build.flavor "" 2>/dev/null
 resetprop -n ro.vendor.build.flavor "" 2>/dev/null
 
@@ -113,5 +101,4 @@ check_reset_prop "ro.odm.build.type"         "user"
 
 resetprop --delete sys.oem_unlock_allowed 2>/dev/null
 resetprop -c >/dev/null 2>&1 || true
-
 exit 0
