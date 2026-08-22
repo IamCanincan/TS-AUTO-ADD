@@ -11,7 +11,7 @@ type ui_print >/dev/null 2>&1 || ui_print() { echo "$*"; }
 if [ -z "$MODDIR" ]; then
     MODDIR="$(cd "$(dirname "$0")/.." && pwd)"
 fi
-PROP_FILE="$MODDIR/module.prop"
+[ -z "$PROP_FILE" ] && PROP_FILE="$MODDIR/module.prop"
 
 # ---------- 颜色 ----------
 if [ -t 1 ]; then

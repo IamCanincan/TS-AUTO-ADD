@@ -1,5 +1,6 @@
 #!/system/bin/sh
 MODDIR="${0%/*}"
+PROP_FILE="$MODDIR/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/lib/common.sh" || exit 1
 
@@ -20,7 +21,7 @@ inotify_info="$(find_inotify_cmd)"
 inotify_mode="${inotify_info%%:*}"
 inotify_cmd="${inotify_info#*:}"
 
-# 清理残留（锁目录名改为 .lock_dir）
+# 清理残留
 rm -f "$TARGET_BASE/.ts_tmp" "$TARGET_BASE/.lock_dir" "$TARGET_BASE/.debounce" 2>/dev/null
 pids_file="$TARGET_BASE/.ts_daemon_pids.list"
 [ -f "$pids_file" ] && { while read -r pid; do kill -9 "$pid" 2>/dev/null; done < "$pids_file"; rm -f "$pids_file"; }

@@ -1,6 +1,8 @@
 #!/system/bin/sh
 SKIPUNZIP=0
 MODPATH="${0%/*}"
+MODDIR="$MODPATH"
+PROP_FILE="$MODPATH/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
 . "$MODPATH/lib/common.sh" 2>/dev/null || { echo "❌ 无法加载 common.sh"; exit 1; }
@@ -26,14 +28,14 @@ inotify_info="$(find_inotify_cmd)"
 ui_print "  可用组件: ${inotify_info#*:}"
 
 ui_print "[3/5] 设置权限与创建链接"
-chmod -R 755 "$MODPATH/lib" 2>/dev/null
-chmod 755 "$MODPATH/service.sh" "$MODPATH/post-fs-data.sh" "$MODPATH/uninstall.sh" "$MODPATH/action.sh" 2>/dev/null
-mkdir -p /data/adb 2>/dev/null
-ln -sf "$MODPATH/action.sh" "/data/adb/ts-sync" 2>/dev/null
-chmod 755 "/data/adb/ts-sync" 2>/dev/null
+chmod -R 755 "$MODPATH/lib" 2>/dev/null || true
+chmod 755 "$MODPATH/service.sh" "$MODPATH/post-fs-data.sh" "$MODPATH/uninstall.sh" "$MODPATH/action.sh" 2>/dev/null || true
+mkdir -p /data/adb 2>/dev/null || true
+ln -sf "$MODPATH/action.sh" "/data/adb/ts-sync" 2>/dev/null || true
+chmod 755 "/data/adb/ts-sync" 2>/dev/null || true
 
 ui_print "[4/5] 生成初始配置（执行首次同步）"
-do_sync
+do_sync || true
 
 ui_print "[5/5] 更新模块描述（已在同步中更新）"
 
