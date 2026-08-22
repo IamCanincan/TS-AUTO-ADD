@@ -3,37 +3,38 @@
 # TS-AUTO-ADD - 公共函数库
 #=============================================================================
 
-ts_base="/data/adb/tricky_store"
-teesim_base="/data/adb/teesim"
-log_file="/data/adb/ts_auto.log"
-lock_timeout=15
+# 常量定义
+TS_BASE="/data/adb/tricky_store"
+TEESIM_BASE="/data/adb/teesim"
+LOG_FILE="/data/adb/ts_auto.log"
+LOCK_TIMEOUT=15
 
-# 全局变量（由 detect_target_env 设置）
-target_type=""
-target_base=""
-taa_sys_file=""
+# 全局状态变量（由 detect_target_env 设置）
+TARGET_TYPE=""
+TARGET_BASE=""
+TAA_SYS_FILE=""
 
 # ---------- 环境检测 ----------
-# 检测目标环境（TrickyStore / TeeSimulator），并设置全局路径
-# 返回：0=TS，1=TEESIM，2=冲突（两者同时存在），3=未检测到
+# 检测目标环境（TrickyStore / TeeSimulator），并设置全局路径变量
+# 返回：0=TS, 1=TEESIM, 2=冲突, 3=未检测到
 detect_target_env() {
     local ts_exist=0
     local teesim_exist=0
 
-    [ -d "$ts_base" ] || [ -d "/data/adb/modules/tricky_store" ] || [ -d "/data/adb/modules_update/tricky_store" ] && ts_exist=1
-    [ -d "$teesim_base" ] || [ -d "/data/adb/modules/teesim" ] || [ -d "/data/adb/modules_update/teesim" ] && teesim_exist=1
+    [ -d "$TS_BASE" ] || [ -d "/data/adb/modules/tricky_store" ] || [ -d "/data/adb/modules_update/tricky_store" ] && ts_exist=1
+    [ -d "$TEESIM_BASE" ] || [ -d "/data/adb/modules/teesim" ] || [ -d "/data/adb/modules_update/teesim" ] && teesim_exist=1
 
     if [ "$ts_exist" -eq 1 ] && [ "$teesim_exist" -eq 1 ]; then
         return 2
     elif [ "$ts_exist" -eq 1 ]; then
-        target_type="TS"
-        target_base="$ts_base"
-        taa_sys_file="$ts_base/taa_sys.txt"
+        TARGET_TYPE="TS"
+        TARGET_BASE="$TS_BASE"
+        TAA_SYS_FILE="$TS_BASE/taa_sys.txt"
         return 0
     elif [ "$teesim_exist" -eq 1 ]; then
-        target_type="TEESIM"
-        target_base="$teesim_base"
-        taa_sys_file="$teesim_base/taa_sys.txt"
+        TARGET_TYPE="TEESIM"
+        TARGET_BASE="$TEESIM_BASE"
+        TAA_SYS_FILE="$TEESIM_BASE/taa_sys.txt"
         return 1
     else
         return 3
@@ -41,51 +42,60 @@ detect_target_env() {
 }
 
 # ---------- 日志函数 ----------
-log_info() {
-    echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$log_file" 2>/dev/null
-}
-
-log_warn() {
-    echo "[WARN] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$log_file" 2>/dev/null
-}
-
-log_err() {
-    echo "[ERR] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$log_file" 2>/dev/null
-}
+log_info() { echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE" 2>/dev/null; }
+log_warn() { echo "[WARN] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE" 2>/dev/null; }
+log_err()  { echo "[ERR]  $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE" 2>/dev/null; }
 
 # ---------- 文件锁 ----------
 acquire_lock() {
     local lock_dir="$1"
     local waited=0
-    while [ "$waited" -lt "$lock_timeout" ]; do
+    while [ "$waited" -lt "$LOCK_TIMEOUT" ]; do
         if mkdir "$lock_dir" 2>/dev/null; then
             return 0
         fi
         sleep 1
         waited=$((waited + 1))
     done
-    # 超时后强制清理并重试
     rmdir "$lock_dir" 2>/dev/null
     mkdir "$lock_dir" 2>/dev/null || return 1
     return 0
 }
 
-release_lock() {
-    rmdir "$1" 2>/dev/null || true
+release_lock() { rmdir "$1" 2>/dev/null || true; }
+
+# ---------- 获取第三方应用列表 ----------
+# 输出：每行一个包名，过滤空行
+get_installed_packages() {
+    local raw
+    raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
+    echo "$raw" | sed -n 's/^package://p' | sed '/^$/d'
 }
 
-# ---------- 系统白名单初始化（默认谷歌三件套） ----------
+# ---------- 系统白名单初始化（仅当文件不存在时创建） ----------
+# 默认包含 Google 服务框架、Play 服务和 Play 商店
 ensure_taa_sys() {
     local file="$1"
     if [ ! -f "$file" ]; then
         mkdir -p "${file%/*}" 2>/dev/null
-        # 默认包含 Google 服务框架、Play 服务和 Play 商店
         printf "com.google.android.gms\ncom.android.vending\ncom.google.android.gsf\n" > "$file" 2>/dev/null
         chmod 640 "$file" 2>/dev/null
     fi
 }
 
-# ---------- 模块描述更新 ----------
+# ---------- 合并系统白名单与用户应用，去重排序 ----------
+# 参数：系统白名单文件路径，用户应用列表（字符串）
+# 输出：合并后的列表（每行一个包名）到 stdout
+merge_and_dedupe() {
+    local sys_file="$1"
+    local user_list="$2"
+    {
+        [ -f "$sys_file" ] && cat "$sys_file"
+        echo "$user_list"
+    } | sort -u | sed '/^$/d'
+}
+
+# ---------- 更新模块描述 ----------
 update_module_prop() {
     local prop_file="$1"
     local new_desc="$2"
@@ -187,17 +197,17 @@ EOF
     rm -f "$formatted_apps_file" "${json_file}.tmp" 2>/dev/null
 }
 
-# ---------- 目标配置写入 ----------
-# 根据 target_type 将合并后的包列表写入对应配置文件
+# ---------- 写入目标配置文件 ----------
+# 根据 TARGET_TYPE 写入 target.txt（TS）或 config.json（TEESIM）
 write_target_config() {
     local pkg_list="$1"
-    case "$target_type" in
+    case "$TARGET_TYPE" in
         TS)
-            cp -f "$pkg_list" "$target_base/target.txt" 2>/dev/null
-            chmod 644 "$target_base/target.txt" 2>/dev/null
+            cp -f "$pkg_list" "$TARGET_BASE/target.txt" 2>/dev/null
+            chmod 644 "$TARGET_BASE/target.txt" 2>/dev/null
             ;;
         TEESIM)
-            generate_teesim_json "$pkg_list" "$target_base/config.json"
+            generate_teesim_json "$pkg_list" "$TARGET_BASE/config.json"
             ;;
         *)
             return 1

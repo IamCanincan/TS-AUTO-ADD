@@ -1,6 +1,6 @@
 #!/system/bin/sh
 #=============================================================================
-# TS-AUTO-ADD - 后台守护进程（监控包变化并自动同步）
+# TS-AUTO-ADD - 后台守护进程
 #=============================================================================
 
 MODDIR="${0%/*}"
@@ -19,47 +19,35 @@ case $env_status in
     3) log_err "未检测到目标环境" ; exit 1 ;;
 esac
 
-tmp_file="$target_base/.ts_tmp"
-lock_dir="$target_base/.ts_lock"
-debounce_lock="$target_base/.ts_debounce"
-pids_file="$target_base/.ts_daemon_pids.list"
+tmp_file="$TARGET_BASE/.ts_tmp"
+lock_dir="$TARGET_BASE/.ts_lock"
+debounce_lock="$TARGET_BASE/.ts_debounce"
+pids_file="$TARGET_BASE/.ts_daemon_pids.list"
 
-inotify_info=$(find_inotify_cmd)
+inotify_info="$(find_inotify_cmd)"
 [ -z "$inotify_info" ] && { log_err "inotify 工具不可用" ; exit 1; }
 inotify_mode="${inotify_info%%:*}"
 inotify_cmd="${inotify_info#*:}"
-log_info "目标环境: $target_type，监控工具: ${inotify_cmd%% *}"
+log_info "目标环境: $TARGET_TYPE，监控工具: ${inotify_cmd%% *}"
 
-# 清理残留文件
+# 清理残留
 rm -rf "$tmp_file" "$lock_dir" "$debounce_lock" 2>/dev/null
-# 清理旧的后台进程（如果存在记录）
-if [ -f "$pids_file" ]; then
+[ -f "$pids_file" ] && {
     while read -r pid; do
         [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
     done < "$pids_file"
     rm -f "$pids_file" 2>/dev/null
-fi
+}
 
-# ---------- 核心同步函数 ----------
+# ---------- 同步核心函数 ----------
 do_sync() {
     log_info "开始同步包列表"
-    mkdir -p "$target_base" 2>/dev/null
-    ensure_taa_sys "$taa_sys_file"
+    ensure_taa_sys "$TAA_SYS_FILE"
+    local user_list="$(get_installed_packages)"
+    local user_count="$(echo "$user_list" | wc -l)"
+    local sys_count="$( [ -f "$TAA_SYS_FILE" ] && cat "$TAA_SYS_FILE" | sed '/^$/d' | wc -l || echo 0 )"
 
-    local apps_raw
-    apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
-    local user_list
-    user_list=$(echo "$apps_raw" | sed -n 's/^package://p')
-    local user_count
-    user_count=$(echo "$user_list" | sed '/^$/d' | wc -l)
-    local sys_count
-    sys_count=$(cat "$taa_sys_file" 2>/dev/null | sed '/^$/d' | wc -l)
-
-    {
-        cat "$taa_sys_file" 2>/dev/null
-        echo "$user_list"
-    } | sort -u | sed '/^$/d' > "$tmp_file" 2>/dev/null
-
+    merge_and_dedupe "$TAA_SYS_FILE" "$user_list" > "$tmp_file" 2>/dev/null
     if [ -s "$tmp_file" ]; then
         write_target_config "$tmp_file"
         log_info "同步完成，系统白名单: $sys_count，第三方应用: $user_count"
@@ -68,17 +56,14 @@ do_sync() {
     fi
     rm -f "$tmp_file" 2>/dev/null
 
-    local current_time
-    current_time=$(date '+%H:%M')
-    update_module_prop "$PROP_FILE" "[环境: ${target_type} | 系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
+    local current_time="$(date '+%H:%M')"
+    update_module_prop "$PROP_FILE" "[环境: ${TARGET_TYPE} | 系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
 }
 
-# ---------- 带防抖的同步调度 ----------
-dispatch_sync() {
-    # 尝试获取防抖锁，如果已存在则忽略本次事件
+# ---------- 防抖调度 ----------
+with_debounce() {
     if mkdir "$debounce_lock" 2>/dev/null; then
         (
-            # 在子进程中执行同步，并释放防抖锁
             acquire_lock "$lock_dir" || exit 1
             do_sync
             release_lock "$lock_dir"
@@ -90,24 +75,23 @@ dispatch_sync() {
 }
 
 # 等待系统启动完成
-until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do
+until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 2
 done
-
 log_info "系统已启动，执行首次同步"
-dispatch_sync
+with_debounce
 
-# ---------- 启动 inotify 监控 ----------
-# 使用 while 循环确保 inotify 进程崩溃后自动重启
+# ---------- 启动 inotify 监控（两个任务） ----------
+# 任务1：监听 /data/system/packages.list 变化
 (
     while true; do
         if [ "$inotify_mode" = "inotifywait" ]; then
             $inotify_cmd -m -e modify -e create -e delete "$WATCH_DIR" 2>/dev/null | while read -r line; do
-                case "$line" in *packages.list*) dispatch_sync ;; esac
+                case "$line" in *packages.list*) with_debounce ;; esac
             done
         else
             $inotify_cmd - "$WATCH_DIR:wc" 2>/dev/null | while read -r event file; do
-                case "$file" in *packages.list*) dispatch_sync ;; esac
+                case "$file" in *packages.list*) with_debounce ;; esac
             done
         fi
         sleep 3
@@ -115,16 +99,17 @@ dispatch_sync
 ) &
 pid1=$!
 
+# 任务2：监听 taa_sys.txt 变化
 (
     while true; do
-        ensure_taa_sys "$taa_sys_file"
+        ensure_taa_sys "$TAA_SYS_FILE"
         if [ "$inotify_mode" = "inotifywait" ]; then
-            $inotify_cmd -m -e modify -e create -e delete "$taa_sys_file" 2>/dev/null | while read -r line; do
-                dispatch_sync
+            $inotify_cmd -m -e modify -e create -e delete "$TAA_SYS_FILE" 2>/dev/null | while read -r line; do
+                with_debounce
             done
         else
-            $inotify_cmd - "$taa_sys_file:wc" 2>/dev/null | while read -r line; do
-                dispatch_sync
+            $inotify_cmd - "$TAA_SYS_FILE:wc" 2>/dev/null | while read -r line; do
+                with_debounce
             done
         fi
         sleep 3

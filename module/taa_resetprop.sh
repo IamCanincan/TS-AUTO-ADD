@@ -39,17 +39,17 @@ empty_reset_prop() {
 # ---------- 1. 提取 Boot Hash ----------
 fetch_boot_hash() {
     local hash
-    # 从 /proc/cmdline
+    # 从 /proc/cmdline 解析
     if [ -r "/proc/cmdline" ]; then
         hash="$(grep -oE 'androidboot\.vbmeta\.digest=[a-fA-F0-9]{64}' /proc/cmdline 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]')"
         [ "${#hash}" -eq 64 ] && echo "$hash" && return 0
     fi
-    # 从 dmesg
+    # 从 dmesg 提取
     if command -v dmesg >/dev/null 2>&1; then
         hash="$(dmesg 2>/dev/null | grep -iE 'vbmeta.*digest|digest.*vbmeta' | grep -oE '[a-fA-F0-9]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]')"
         [ "${#hash}" -eq 64 ] && echo "$hash" && return 0
     fi
-    # 从 ro.boot.vbmeta.digest
+    # 从 ro.boot.vbmeta.digest 属性
     hash="$(resetprop ro.boot.vbmeta.digest 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     [ "${#hash}" -eq 64 ] && echo "$hash" && return 0
     return 1
@@ -120,6 +120,21 @@ empty_reset_prop "ro.boot.vbmeta.invalidate_on_error"        "yes"
 empty_reset_prop "ro.boot.vbmeta.avb_version"                "1.2"
 empty_reset_prop "ro.boot.vbmeta.hash_alg"                   "sha256"
 empty_reset_prop "ro.boot.vbmeta.size"                       "4096"
+
+# ---------- 6. 新增：清理 Flavor 与分区 Build.Type ----------
+# 清除 LineageOS 等 ROM 的 flavor 节点
+resetprop -n ro.build.flavor "" 2>/dev/null
+resetprop -n ro.vendor.build.flavor "" 2>/dev/null
+
+# 强制设定各分区 build.type 为 user（覆盖可能遗漏的分区）
+check_reset_prop "ro.system.build.type"      "user"
+check_reset_prop "ro.system_ext.build.type"  "user"
+check_reset_prop "ro.vendor.build.type"      "user"
+check_reset_prop "ro.product.build.type"     "user"
+check_reset_prop "ro.odm.build.type"         "user"
+
+# 删除 OEM 解锁状态属性（比赋值 0 更彻底）
+resetprop --delete sys.oem_unlock_allowed 2>/dev/null
 
 # 重置属性缓存
 resetprop -c >/dev/null 2>&1 || true
