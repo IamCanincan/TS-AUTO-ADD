@@ -20,7 +20,7 @@ if [ -f "$MODDIR/lib/common.sh" ]; then
         log_force "common.sh 加载成功"
     else
         log_force "common.sh 加载失败，错误码 $?"
-        # 定义最小函数集
+        # 定义最小函数集（避免后续引用出错）
         log_info() { log_force "[INFO] $*"; }
         log_warn() { log_force "[WARN] $*"; }
         log_err() { log_force "[ERR] $*"; }
@@ -32,7 +32,7 @@ if [ -f "$MODDIR/lib/common.sh" ]; then
         ensure_taa_sys() { return 0; }
     fi
 else
-    log_force "common.sh 不存在"
+    log_force "common.sh 不存在: $MODDIR/lib/common.sh"
     log_info() { log_force "[INFO] $*"; }
     log_warn() { log_force "[WARN] $*"; }
     log_err() { log_force "[ERR] $*"; }

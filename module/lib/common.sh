@@ -1,18 +1,26 @@
 #!/system/bin/sh
 # common.sh - 核心函数库
 
-# 使用 MODDIR（由调用者设置）来定位 config.sh
-if [ -z "$MODDIR" ]; then
-    # 如果未定义，尝试推断（可能不准确）
-    MODDIR="/data/adb/modules/ts-auto-add"
+# ========== 自动定位模块目录 ==========
+if [ -z "$MODDIR" ] || [ ! -d "$MODDIR/lib" ]; then
+    # 尝试常见路径
+    if [ -d "/data/adb/modules/ts-auto-add" ]; then
+        MODDIR="/data/adb/modules/ts-auto-add"
+    elif [ -d "/data/adb/modules_update/ts-auto-add" ]; then
+        MODDIR="/data/adb/modules_update/ts-auto-add"
+    else
+        echo "❌ 无法自动定位模块目录，请设置 MODDIR 环境变量" >&2
+        return 1
+    fi
 fi
+
+# 加载配置
 . "$MODDIR/lib/config.sh"
 
 # ---------- 兼容性保护 ----------
 type abort >/dev/null 2>&1 || abort() { echo "❌ $*"; exit 1; }
 type ui_print >/dev/null 2>&1 || ui_print() { echo "$*"; }
 
-# 设置 PROP_FILE（如果未定义）
 [ -z "$PROP_FILE" ] && PROP_FILE="$MODDIR/module.prop"
 
 # ---------- 颜色 ----------
@@ -63,7 +71,7 @@ detect_target_env() {
     fi
 }
 
-# ---------- 文件锁（使用 mkdir，兼容所有环境） ----------
+# ---------- 文件锁（mkdir 方式，兼容所有环境） ----------
 acquire_lock() {
     local lock_dir="$1"
     local lock_path="$lock_dir/.lock_dir"
@@ -85,14 +93,14 @@ release_lock() {
     rmdir "$lock_dir/.lock_dir" 2>/dev/null || true
 }
 
-# ---------- 应用列表 ----------
+# ---------- 获取已安装第三方应用列表 ----------
 get_installed_packages() {
     local raw
     raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
     echo "$raw" | sed -n 's/^package://p' | sed '/^$/d'
 }
 
-# ---------- 白名单 ----------
+# ---------- 确保系统白名单文件存在 ----------
 ensure_taa_sys() {
     local file="$1"
     [ -f "$file" ] && return
@@ -107,7 +115,7 @@ merge_and_dedupe() {
     { [ -f "$sys_file" ] && cat "$sys_file"; echo "$user_list"; } | sort -u | sed '/^$/d'
 }
 
-# ---------- 更新描述 ----------
+# ---------- 更新模块描述 ----------
 update_module_prop() {
     local prop_file="$1" new_desc="$2"
     [ -f "$prop_file" ] || return 1
@@ -115,7 +123,7 @@ update_module_prop() {
     sed -i "s/^description=.*/description=$new_desc/" "$prop_file" 2>/dev/null
 }
 
-# ---------- inotify 查找 ----------
+# ---------- 查找 inotify 工具（优先系统，备选 BusyBox） ----------
 find_inotify_cmd() {
     for cmd in inotifywait inotifyd; do
         if command -v "$cmd" >/dev/null 2>&1; then
@@ -136,12 +144,12 @@ find_inotify_cmd() {
     return 1
 }
 
-# ---------- 计数 ----------
+# ---------- 计数工具 ----------
 count_lines() {
     local input="$1"
     [ -z "$input" ] && echo 0 || printf '%s\n' "$input" | grep -c .
 }
 
-# ---------- 加载子模块（使用 MODDIR 定位） ----------
+# ---------- 加载子模块（使用 MODDIR） ----------
 . "$MODDIR/lib/sync.sh"
 . "$MODDIR/lib/daemon.sh"

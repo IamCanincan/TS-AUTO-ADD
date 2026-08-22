@@ -33,12 +33,37 @@ do_sync() {
                 rm -f "$tmp_file"
                 return 0
             fi
+            
+            # 生成 apps 数组内容（JSON 格式，缩进 6 个空格）
+            local apps_json=$(sed 's/^/      "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
+            
+            # 使用 sed 替换 apps 数组（更可靠）
+            # 查找 "apps": [ 开始，到 ] 结束，替换为新内容
             if command -v awk >/dev/null 2>&1; then
-                local apps_json=$(sed 's/^/        "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
+                # 使用 awk 精确定位并替换 "apps" 数组
                 awk -v apps="$apps_json" '
-                    /"apps"[ \t]*:/ { print "    \"apps\": ["; print apps; print "    ]"; next }
-                    /]/ && in_apps { in_apps=0; next }
-                    { if (!in_apps) print }
+                    BEGIN { in_apps = 0; printed = 0 }
+                    /"apps"[ \t]*:/ {
+                        print "      \"apps\": ["
+                        print apps
+                        print "      ],"
+                        in_apps = 1
+                        printed = 1
+                        next
+                    }
+                    in_apps && /]/ {
+                        in_apps = 0
+                        next
+                    }
+                    !in_apps { print }
+                    END {
+                        # 如果没找到 "apps" 字段，添加一个
+                        if (!printed) {
+                            print "      \"apps\": ["
+                            print apps
+                            print "      ],"
+                        }
+                    }
                 ' "$json" > "${json}.tmp" && mv -f "${json}.tmp" "$json" && chmod 644 "$json" 2>/dev/null
                 write_ok=$?
                 log_info "已更新 config.json (使用 awk)"
