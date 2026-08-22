@@ -3,7 +3,6 @@
 
 # ========== 自动定位模块目录 ==========
 if [ -z "$MODDIR" ] || [ ! -d "$MODDIR/lib" ]; then
-    # 尝试常见路径
     if [ -d "/data/adb/modules/ts-auto-add" ]; then
         MODDIR="/data/adb/modules/ts-auto-add"
     elif [ -d "/data/adb/modules_update/ts-auto-add" ]; then
@@ -14,7 +13,6 @@ if [ -z "$MODDIR" ] || [ ! -d "$MODDIR/lib" ]; then
     fi
 fi
 
-# 加载配置
 . "$MODDIR/lib/config.sh"
 
 # ---------- 兼容性保护 ----------
@@ -71,7 +69,7 @@ detect_target_env() {
     fi
 }
 
-# ---------- 文件锁（mkdir 方式，兼容所有环境） ----------
+# ---------- 文件锁（mkdir 方式） ----------
 acquire_lock() {
     local lock_dir="$1"
     local lock_path="$lock_dir/.lock_dir"
@@ -83,7 +81,6 @@ acquire_lock() {
         sleep 1
         waited=$((waited + 1))
     done
-    # 超时强制删除旧锁并重试一次
     rmdir "$lock_path" 2>/dev/null
     mkdir "$lock_path" 2>/dev/null && return 0
     return 1
@@ -93,14 +90,14 @@ release_lock() {
     rmdir "$lock_dir/.lock_dir" 2>/dev/null || true
 }
 
-# ---------- 获取已安装第三方应用列表 ----------
+# ---------- 获取已安装第三方应用 ----------
 get_installed_packages() {
     local raw
     raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
     echo "$raw" | sed -n 's/^package://p' | sed '/^$/d'
 }
 
-# ---------- 确保系统白名单文件存在 ----------
+# ---------- 确保系统白名单 ----------
 ensure_taa_sys() {
     local file="$1"
     [ -f "$file" ] && return
@@ -123,7 +120,7 @@ update_module_prop() {
     sed -i "s/^description=.*/description=$new_desc/" "$prop_file" 2>/dev/null
 }
 
-# ---------- 查找 inotify 工具（优先系统，备选 BusyBox） ----------
+# ---------- 查找 inotify ----------
 find_inotify_cmd() {
     for cmd in inotifywait inotifyd; do
         if command -v "$cmd" >/dev/null 2>&1; then
@@ -144,12 +141,12 @@ find_inotify_cmd() {
     return 1
 }
 
-# ---------- 计数工具 ----------
+# ---------- 计数 ----------
 count_lines() {
     local input="$1"
     [ -z "$input" ] && echo 0 || printf '%s\n' "$input" | grep -c .
 }
 
-# ---------- 加载子模块（使用 MODDIR） ----------
+# ---------- 加载子模块 ----------
 . "$MODDIR/lib/sync.sh"
 . "$MODDIR/lib/daemon.sh"

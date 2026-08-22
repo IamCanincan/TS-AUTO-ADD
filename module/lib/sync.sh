@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# sync.sh - 同步核心
+# sync.sh - 同步核心，只修改 default profile 的 apps 列表
 
 do_sync() {
     log_info "开始同步包列表"
@@ -33,40 +33,51 @@ do_sync() {
                 rm -f "$tmp_file"
                 return 0
             fi
-            
-            # 生成 apps 数组内容（JSON 格式，缩进 6 个空格）
+
+            # 生成 apps 数组内容（缩进 6 个空格）
             local apps_json=$(sed 's/^/      "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
-            
-            # 使用 sed 替换 apps 数组（更可靠）
-            # 查找 "apps": [ 开始，到 ] 结束，替换为新内容
+
             if command -v awk >/dev/null 2>&1; then
-                # 使用 awk 精确定位并替换 "apps" 数组
-                awk -v apps="$apps_json" '
-                    BEGIN { in_apps = 0; printed = 0 }
-                    /"apps"[ \t]*:/ {
+                # 使用 awk 精确定位 "profiles" -> "default" -> "apps" 并进行替换
+                awk -v new_apps="$apps_json" '
+                    BEGIN { in_default=0; in_apps=0; printed=0; skip=0 }
+                    # 检测 "profiles" 块开始（仅最外层）
+                    /"profiles"[ \t]*:/ { in_profiles=1; print; next }
+                    # 在 profiles 块内，遇到 "default" : { 标记
+                    in_profiles && /"default"[ \t]*:/ { in_default=1; print; next }
+                    # 在 default 块内，遇到 "apps" : [ 开始替换
+                    in_default && /"apps"[ \t]*:/ {
                         print "      \"apps\": ["
-                        print apps
+                        print new_apps
                         print "      ],"
-                        in_apps = 1
-                        printed = 1
+                        printed=1
+                        skip=1
                         next
                     }
-                    in_apps && /]/ {
-                        in_apps = 0
+                    # 如果正在跳过 apps 数组内容，直到遇到 ] 结束
+                    skip && /]/ {
+                        skip=0
                         next
                     }
-                    !in_apps { print }
+                    # 如果还在跳过，继续跳过
+                    skip { next }
+                    # 否则正常打印
+                    { print }
+                    # 当遇到 default 块的结束 } 时重置 in_default（但注意不要和 skip 冲突）
+                    in_default && /}/ && !skip { in_default=0 }
+                    # 当遇到 profiles 块的结束 } 时重置 in_profiles
+                    in_profiles && /}/ && !skip { in_profiles=0 }
                     END {
-                        # 如果没找到 "apps" 字段，添加一个
+                        # 如果 default 中没有 apps 字段，则添加
                         if (!printed) {
                             print "      \"apps\": ["
-                            print apps
+                            print new_apps
                             print "      ],"
                         }
                     }
                 ' "$json" > "${json}.tmp" && mv -f "${json}.tmp" "$json" && chmod 644 "$json" 2>/dev/null
                 write_ok=$?
-                log_info "已更新 config.json (使用 awk)"
+                log_info "已更新 config.json (只修改 default profile)"
             else
                 log_warn "awk 不可用，跳过 config.json 更新"
                 write_ok=1
