@@ -5,42 +5,54 @@ MODDIR="$MODPATH"
 PROP_FILE="$MODPATH/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
-. "$MODPATH/lib/common.sh" 2>/dev/null || { echo "❌ 无法加载 common.sh"; exit 1; }
+# 尽量加载 common.sh，若失败则设置必要变量
+if [ -f "$MODPATH/lib/common.sh" ]; then
+    . "$MODPATH/lib/common.sh" 2>/dev/null || {
+        # 如果加载失败，定义最小函数集
+        ui_print() { echo "$*"; }
+        abort() { echo "❌ $*"; exit 1; }
+        print_info() { echo "▶ $*"; }
+        print_ok() { echo "✓ $*"; }
+        print_warn() { echo "⚠ $*" >&2; }
+        print_err() { echo "✗ $*" >&2; }
+        update_module_prop() { return 0; }
+        detect_target_env() { return 3; }
+        find_inotify_cmd() { return 1; }
+    }
+else
+    ui_print() { echo "$*"; }
+    abort() { echo "❌ $*"; exit 1; }
+fi
 
 ui_print "================================================"
 ui_print "          TS-AUTO-ADD 安装程序"
 ui_print "================================================"
 
-ui_print "[1/5] 检查环境兼容性"
-detect_target_env
-env_status=$?
-case $env_status in
-    2) abort "❌ 检测到 TrickyStore 与 TeeSimulator 同时存在" ;;
-    3) abort "❌ 未检测到 TrickyStore 或 TeeSimulator" ;;
-    0) env_name="TrickyStore" ;;
-    1) env_name="TeeSimulator" ;;
-esac
-ui_print "  目标环境: $env_name ($TARGET_BASE)"
-
-ui_print "[2/5] 检查 inotify 依赖"
-inotify_info="$(find_inotify_cmd)"
-[ -z "$inotify_info" ] && abort "❌ 未找到 inotify 监控工具"
-ui_print "  可用组件: ${inotify_info#*:}"
-
-ui_print "[3/5] 设置权限与创建链接"
+ui_print "[1/3] 设置权限与创建链接"
 chmod -R 755 "$MODPATH/lib" 2>/dev/null || true
 chmod 755 "$MODPATH/service.sh" "$MODPATH/post-fs-data.sh" "$MODPATH/uninstall.sh" "$MODPATH/action.sh" 2>/dev/null || true
 mkdir -p /data/adb 2>/dev/null || true
 ln -sf "$MODPATH/action.sh" "/data/adb/ts-sync" 2>/dev/null || true
 chmod 755 "/data/adb/ts-sync" 2>/dev/null || true
 
-ui_print "[4/5] 生成初始配置（执行首次同步）"
-do_sync || true
+ui_print "[2/3] 检测目标环境（仅提示，不影响安装）"
+detect_target_env >/dev/null 2>&1
+env_status=$?
+case $env_status in
+    2) ui_print "  ⚠ 同时检测到 TrickyStore 与 TeeSimulator，可能冲突" ;;
+    3) ui_print "  ⚠ 未检测到 TrickyStore 或 TeeSimulator，模块将无法工作" ;;
+    0) ui_print "  ✅ 检测到 TrickyStore" ;;
+    1) ui_print "  ✅ 检测到 TeeSimulator" ;;
+esac
 
-ui_print "[5/5] 更新模块描述（已在同步中更新）"
+ui_print "[3/3] 更新模块描述（简要）"
+current_time="$(date '+%H:%M')"
+new_desc="✅ 已安装 (环境: ${TARGET_TYPE:-未检测} | 时间: ${current_time})"
+update_module_prop "$MODPATH/module.prop" "$new_desc" 2>/dev/null || true
 
 ui_print "================================================"
 ui_print "  安装完成！"
+ui_print "  注意：首次同步将在系统启动后自动执行"
 ui_print "  手动同步: /data/adb/ts-sync"
 ui_print "  停止服务: /data/adb/ts-sync --stop"
 ui_print "  建议重启设备使服务生效"
