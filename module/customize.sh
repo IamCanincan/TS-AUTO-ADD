@@ -5,10 +5,9 @@ MODDIR="$MODPATH"
 PROP_FILE="$MODPATH/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
-# 尽量加载 common.sh，若失败则设置必要变量
+# 尽量加载 common.sh，若失败则定义最小函数集
 if [ -f "$MODPATH/lib/common.sh" ]; then
     . "$MODPATH/lib/common.sh" 2>/dev/null || {
-        # 如果加载失败，定义最小函数集
         ui_print() { echo "$*"; }
         abort() { echo "❌ $*"; exit 1; }
         print_info() { echo "▶ $*"; }
