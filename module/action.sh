@@ -1,118 +1,154 @@
 #!/system/bin/sh
 #==============================================================================
-# 文件: action.sh
-# 描述: TS-AUTO-ADD 手动同步工具，用于立即执行一次应用列表同步
-# 用法: action.sh [--status|--log|--help]
+# action.sh - 手动同步工具（支持 --status, --log, --stop）
 #==============================================================================
 
 MODDIR="${0%/*}"
 PROP_FILE="$MODDIR/module.prop"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
+. "$MODDIR/common.sh" || { echo "❌ 无法加载 common.sh"; exit 1; }
 
-# 加载公共函数库
-. "$MODDIR/common.sh" || { print_err "无法加载 common.sh，请检查模块完整性"; exit 1; }
+[ "$(id -u)" -ne 0 ] && { echo "❌ 需要 root 权限"; exit 1; }
 
-# 检查 root 权限
-[ "$(id -u)" -ne 0 ] && { print_err "需要 root 权限，请使用 su 执行"; exit 1; }
+# 检测环境（仅用于获取 TARGET_BASE 等）
+detect_target_env >/dev/null 2>&1
+env_status=$?
+case $env_status in
+    0|1) ;;
+    *) echo "❌ 未检测到 TrickyStore 或 TeeSimulator 环境"; exit 1 ;;
+esac
 
-# ----------------------------- 命令行参数处理 ------------------------------
-case "$1" in
-    --status|-s)
-        # 显示守护进程状态
-        if [ -f "$TARGET_BASE/.ts_daemon_pids.list" ]; then
-            pids=$(cat "$TARGET_BASE/.ts_daemon_pids.list" 2>/dev/null | tr '\n' ' ')
-            print_info "守护进程 PID: $pids"
-            print_info "监控目标: $TARGET_TYPE"
-            # 显示配置文件最后修改时间
+# ----------------------------- 子命令函数 ------------------------------------
+show_status() {
+    if [ -f "$TARGET_BASE/.ts_daemon_pids.list" ]; then
+        pids=$(cat "$TARGET_BASE/.ts_daemon_pids.list" 2>/dev/null | tr '\n' ' ')
+        alive=0
+        for pid in $pids; do
+            kill -0 "$pid" 2>/dev/null && alive=1
+        done
+        if [ "$alive" -eq 1 ]; then
+            echo "✅ 守护进程运行中，PID: $pids"
+            echo "   目标环境: $TARGET_TYPE"
             if [ -f "$TARGET_BASE/target.txt" ]; then
-                print_info "最后同步时间: $(stat -c %y "$TARGET_BASE/target.txt" 2>/dev/null)"
+                echo "   最后同步: $(stat -c %y "$TARGET_BASE/target.txt" 2>/dev/null)"
             elif [ -f "$TARGET_BASE/config.json" ]; then
-                print_info "最后同步时间: $(stat -c %y "$TARGET_BASE/config.json" 2>/dev/null)"
+                echo "   最后同步: $(stat -c %y "$TARGET_BASE/config.json" 2>/dev/null)"
             fi
         else
-            print_warn "守护进程未运行或 PID 文件不存在"
+            echo "⚠️ PID 文件存在但进程未运行"
         fi
-        exit 0
-        ;;
+    else
+        echo "⚠️ 守护进程未运行"
+    fi
+}
+
+stop_daemon() {
+    local pids_file="$TARGET_BASE/.ts_daemon_pids.list"
+    [ ! -f "$pids_file" ] && { echo "⚠️ 守护进程未运行"; return 0; }
+    local pids=$(cat "$pids_file" 2>/dev/null | tr '\n' ' ')
+    local stopped=0
+    for pid in $pids; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null
+            sleep 0.5
+            kill -9 "$pid" 2>/dev/null
+            stopped=1
+        fi
+    done
+    rm -f "$pids_file" 2>/dev/null
+    if [ "$stopped" -eq 1 ]; then
+        local stop_time="$(date '+%H:%M')"
+        update_module_prop "$PROP_FILE" "⏹️ 已停止 (环境: ${TARGET_TYPE}) | 时间: ${stop_time}"
+        echo "✅ 守护进程已停止，模块描述已更新"
+    else
+        echo "⚠️ 没有找到正在运行的守护进程"
+    fi
+}
+
+# ----------------------------- 命令行参数处理 --------------------------------
+case "$1" in
+    --status|-s) show_status; exit 0 ;;
     --log|-l)
-        # 显示最近 20 条日志
         if [ -f "$LOG_FILE" ]; then
             tail -n 20 "$LOG_FILE"
         else
-            print_warn "日志文件不存在"
+            echo "⚠️ 日志文件不存在"
         fi
-        exit 0
-        ;;
+        exit 0 ;;
+    --stop|-t) stop_daemon; exit 0 ;;
     --help|-h)
-        echo "用法: $0 [选项]"
-        echo "  --status, -s  查看守护进程状态"
-        echo "  --log, -l     显示最近 20 条日志"
-        echo "  --help, -h    显示此帮助"
-        echo "  无参数则执行一次手动同步"
-        exit 0
-        ;;
+        echo "用法: $0 [--status|--log|--stop|--help]"
+        echo "  --status   查看守护进程状态"
+        echo "  --log      显示最近20条日志"
+        echo "  --stop     停止守护进程"
+        echo "  无参数     执行一次手动同步"
+        exit 0 ;;
 esac
 
-# ----------------------------- 主流程 -------------------------------------
+# ----------------------------- 主同步流程 --------------------------------
 echo "================================================"
-echo "          TS-AUTO-ADD 手动同步工具"
+echo "          TS-AUTO-ADD 手动同步"
 echo "================================================"
 
-# 检测目标环境
-detect_target_env
-env_status=$?
-case $env_status in
+detect_target_env >/dev/null 2>&1
+case $? in
     0) env_name="TrickyStore" ;;
     1) env_name="TeeSimulator" ;;
-    2) print_err "检测到 TrickyStore 与 TeeSimulator 同时存在，请禁用其中一个"; exit 1 ;;
-    3) print_err "未检测到 TrickyStore 或 TeeSimulator 环境"; exit 1 ;;
+    *)
+        # 写入停止原因
+        update_module_prop "$PROP_FILE" "⛔ 已停止: 未检测到目标环境"
+        echo "❌ 未检测到 TrickyStore 或 TeeSimulator 环境"
+        exit 1
+        ;;
 esac
+
+# TeeSim 且 config.json 不存在则退出
+if [ "$TARGET_TYPE" = "TEESIM" ] && [ ! -f "$TARGET_BASE/config.json" ]; then
+    update_module_prop "$PROP_FILE" "⛔ 已停止: TeeSimulator config.json 不存在"
+    echo "❌ TeeSimulator config.json 不存在，无法同步"
+    exit 1
+fi
 
 lock_dir="$TARGET_BASE/.ts_lock"
 tmp_file="$TARGET_BASE/.ts_tmp"
 
-# 获取锁，防止并发
-acquire_lock "$lock_dir" || { print_err "获取文件锁失败，可能其他进程正在同步"; exit 1; }
+acquire_lock "$lock_dir" || { echo "❌ 获取锁失败"; exit 1; }
 
-print_info "目标环境: $env_name ($TARGET_BASE)"
-
-# 确保系统白名单存在
+echo "▶ 目标环境: $env_name ($TARGET_BASE)"
 ensure_taa_sys "$TAA_SYS_FILE"
 
-# 获取用户应用列表
 user_list="$(get_installed_packages)"
 user_count="$(count_lines "$user_list")"
 sys_count="$( [ -f "$TAA_SYS_FILE" ] && grep -c . "$TAA_SYS_FILE" 2>/dev/null || echo 0 )"
 
-print_info "系统白名单项数: $sys_count"
-print_info "第三方应用项数: $user_count"
+echo "   系统白名单: $sys_count 项，第三方应用: $user_count 项"
 
-# 若用户列表为空，跳过同步（防止清空配置）
 if [ "$user_count" -eq 0 ]; then
-    print_warn "第三方应用列表为空，可能系统未完全启动，跳过同步"
+    echo "⚠️ 第三方应用列表为空，跳过同步"
     release_lock "$lock_dir"
     exit 0
 fi
 
-# 合并并写入配置文件
 merge_and_dedupe "$TAA_SYS_FILE" "$user_list" > "$tmp_file" 2>/dev/null
 if [ -s "$tmp_file" ]; then
-    write_target_config "$tmp_file" && print_ok "配置文件已更新" || print_warn "配置写入失败（可能 TeeSim 的 config.json 不存在）"
+    if write_target_config "$tmp_file"; then
+        echo "✅ 配置文件已更新"
+    else
+        echo "⚠️ 写入失败（可能 TeeSim 缺少 config.json）"
+    fi
 else
-    print_err "应用列表为空，同步失败"
+    echo "❌ 合并结果为空"
 fi
 rm -f "$tmp_file" 2>/dev/null
 
-# 更新模块描述信息
 current_time="$(date '+%H:%M')"
-new_desc="[环境: ${env_name} | 系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
+new_desc="✅ 运行中 (环境: ${env_name} | 系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time})"
 update_module_prop "$PROP_FILE" "$new_desc"
-print_ok "模块描述已更新"
+echo "✅ 模块描述已更新"
 
 release_lock "$lock_dir"
-
 echo "================================================"
-print_ok "同步流程执行完毕"
+echo "✅ 同步完成"
 echo "================================================"
 exit 0
