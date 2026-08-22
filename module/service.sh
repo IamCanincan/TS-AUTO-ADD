@@ -1,6 +1,5 @@
 #!/system/bin/sh
 MODDIR="${0%/*}"
-PROP_FILE="$MODDIR/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/lib/common.sh" || exit 1
 
@@ -21,17 +20,16 @@ inotify_info="$(find_inotify_cmd)"
 inotify_mode="${inotify_info%%:*}"
 inotify_cmd="${inotify_info#*:}"
 
-# 清理残留
-rm -f "$TARGET_BASE/.ts_tmp" "$TARGET_BASE/.lock" "$TARGET_BASE/.debounce" 2>/dev/null
+# 清理残留（锁目录名改为 .lock_dir）
+rm -f "$TARGET_BASE/.ts_tmp" "$TARGET_BASE/.lock_dir" "$TARGET_BASE/.debounce" 2>/dev/null
 pids_file="$TARGET_BASE/.ts_daemon_pids.list"
 [ -f "$pids_file" ] && { while read -r pid; do kill -9 "$pid" 2>/dev/null; done < "$pids_file"; rm -f "$pids_file"; }
 
-# 等待系统启动完成
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
 log_info "系统已启动，执行首次同步"
 with_debounce
 
-# 监控 packages.list 变化
+# 监控 packages.list
 (
     while true; do
         if [ "$inotify_mode" = "inotifywait" ]; then
@@ -48,7 +46,7 @@ with_debounce
 ) &
 pid1=$!
 
-# 监控 taa_sys.txt 变化
+# 监控 taa_sys.txt
 (
     while true; do
         ensure_taa_sys "$TAA_SYS_FILE"

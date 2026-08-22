@@ -1,13 +1,19 @@
 #!/system/bin/sh
-# common.sh - 基础函数库
+# common.sh - 核心函数库
 
 . "${0%/*}/config.sh"
 
-# ---------- 兼容性保护（KernelSU 可能缺失函数） ----------
+# ---------- 兼容性保护 ----------
 type abort >/dev/null 2>&1 || abort() { echo "❌ $*"; exit 1; }
 type ui_print >/dev/null 2>&1 || ui_print() { echo "$*"; }
 
-# ---------- 颜色输出 ----------
+# 自动设置 MODDIR 和 PROP_FILE（如果未定义）
+if [ -z "$MODDIR" ]; then
+    MODDIR="$(cd "$(dirname "$0")/.." && pwd)"
+fi
+PROP_FILE="$MODDIR/module.prop"
+
+# ---------- 颜色 ----------
 if [ -t 1 ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 else
@@ -18,7 +24,7 @@ print_ok()   { echo "${GREEN}✓${NC} $*"; }
 print_warn() { echo "${YELLOW}⚠${NC} $*" >&2; }
 print_err()  { echo "${RED}✗${NC} $*" >&2; }
 
-# ---------- 日志轮转 ----------
+# ---------- 日志 ----------
 rotate_log() {
     [ -f "$LOG_FILE" ] || return
     local size
@@ -55,26 +61,36 @@ detect_target_env() {
     fi
 }
 
-# ---------- 文件锁（flock） ----------
+# ---------- 文件锁（使用 mkdir，兼容所有环境） ----------
 acquire_lock() {
     local lock_dir="$1"
-    mkdir -p "$lock_dir" 2>/dev/null
-    local lock_file="$lock_dir/.lock"
-    exec 200>"$lock_file"
-    flock -w "$LOCK_TIMEOUT" 200 2>/dev/null
+    local lock_path="$lock_dir/.lock_dir"
+    local waited=0
+    while [ "$waited" -lt "$LOCK_TIMEOUT" ]; do
+        if mkdir "$lock_path" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    # 超时强制删除旧锁并重试一次
+    rmdir "$lock_path" 2>/dev/null
+    mkdir "$lock_path" 2>/dev/null && return 0
+    return 1
 }
 release_lock() {
-    exec 200>&-
+    local lock_dir="$1"
+    rmdir "$lock_dir/.lock_dir" 2>/dev/null || true
 }
 
-# ---------- 应用列表（兼容旧版） ----------
+# ---------- 应用列表 ----------
 get_installed_packages() {
     local raw
     raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
     echo "$raw" | sed -n 's/^package://p' | sed '/^$/d'
 }
 
-# ---------- 确保白名单存在 ----------
+# ---------- 白名单 ----------
 ensure_taa_sys() {
     local file="$1"
     [ -f "$file" ] && return
@@ -89,7 +105,7 @@ merge_and_dedupe() {
     { [ -f "$sys_file" ] && cat "$sys_file"; echo "$user_list"; } | sort -u | sed '/^$/d'
 }
 
-# ---------- 更新模块描述 ----------
+# ---------- 更新描述 ----------
 update_module_prop() {
     local prop_file="$1" new_desc="$2"
     [ -f "$prop_file" ] || return 1
@@ -97,7 +113,7 @@ update_module_prop() {
     sed -i "s/^description=.*/description=$new_desc/" "$prop_file" 2>/dev/null
 }
 
-# ---------- 查找 inotify ----------
+# ---------- inotify 查找 ----------
 find_inotify_cmd() {
     for cmd in inotifywait inotifyd; do
         if command -v "$cmd" >/dev/null 2>&1; then
