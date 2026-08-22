@@ -1,7 +1,9 @@
 #!/system/bin/sh
 # common.sh - 核心函数库
 
-. "${0%/*}/config.sh"
+# 获取 common.sh 自身所在目录（使用 BASH_SOURCE 避免被 source 时路径错误）
+COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$COMMON_DIR/config.sh"
 
 # ---------- 兼容性保护 ----------
 type abort >/dev/null 2>&1 || abort() { echo "❌ $*"; exit 1; }
@@ -9,7 +11,7 @@ type ui_print >/dev/null 2>&1 || ui_print() { echo "$*"; }
 
 # 自动设置 MODDIR 和 PROP_FILE（如果未定义）
 if [ -z "$MODDIR" ]; then
-    MODDIR="$(cd "$(dirname "$0")/.." && pwd)"
+    MODDIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 fi
 [ -z "$PROP_FILE" ] && PROP_FILE="$MODDIR/module.prop"
 
@@ -140,6 +142,6 @@ count_lines() {
     [ -z "$input" ] && echo 0 || printf '%s\n' "$input" | grep -c .
 }
 
-# ---------- 加载子模块 ----------
-. "${0%/*}/sync.sh"
-. "${0%/*}/daemon.sh"
+# ---------- 加载子模块（使用绝对路径） ----------
+. "$COMMON_DIR/sync.sh"
+. "$COMMON_DIR/daemon.sh"
