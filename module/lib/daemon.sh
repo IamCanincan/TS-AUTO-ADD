@@ -1,25 +1,24 @@
+#!/system/bin/sh
 # daemon.sh - 防抖与守护管理
 
 with_debounce() {
-    local lock_dir="$TARGET_BASE/.ts_lock"
-    local debounce_lock="$TARGET_BASE/.ts_debounce"
-    if mkdir "$debounce_lock" 2>/dev/null; then
-        (
-            trap 'rmdir "$debounce_lock" 2>/dev/null' EXIT
-            acquire_lock "$lock_dir" || exit 1
-            do_sync
-            release_lock "$lock_dir"
-        ) &
-    else
-        log_info "同步已在排队，忽略本次事件"
+    local debounce_file="$TARGET_BASE/.debounce"
+    local now=$(date +%s)
+    if [ -f "$debounce_file" ]; then
+        local last=$(cat "$debounce_file" 2>/dev/null || echo 0)
+        [ $((now - last)) -lt "$DEBOUNCE_SECONDS" ] && { log_info "忽略重复事件"; return; }
     fi
+    echo "$now" > "$debounce_file"
+    acquire_lock "$TARGET_BASE" || { log_err "获取锁失败"; return; }
+    do_sync
+    release_lock "$TARGET_BASE"
 }
 
 show_status() {
     local pids_file="$TARGET_BASE/.ts_daemon_pids.list"
     if [ -f "$pids_file" ]; then
-        pids=$(cat "$pids_file" 2>/dev/null | tr '\n' ' ')
-        alive=0
+        local pids=$(cat "$pids_file" 2>/dev/null | tr '\n' ' ')
+        local alive=0
         for pid in $pids; do
             kill -0 "$pid" 2>/dev/null && alive=1
         done

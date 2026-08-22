@@ -22,14 +22,16 @@ inotify_mode="${inotify_info%%:*}"
 inotify_cmd="${inotify_info#*:}"
 
 # 清理残留
-rm -rf "$TARGET_BASE/.ts_tmp" "$TARGET_BASE/.ts_lock" "$TARGET_BASE/.ts_debounce" 2>/dev/null
+rm -f "$TARGET_BASE/.ts_tmp" "$TARGET_BASE/.lock" "$TARGET_BASE/.debounce" 2>/dev/null
 pids_file="$TARGET_BASE/.ts_daemon_pids.list"
 [ -f "$pids_file" ] && { while read -r pid; do kill -9 "$pid" 2>/dev/null; done < "$pids_file"; rm -f "$pids_file"; }
 
+# 等待系统启动完成
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
 log_info "系统已启动，执行首次同步"
 with_debounce
 
+# 监控 packages.list 变化
 (
     while true; do
         if [ "$inotify_mode" = "inotifywait" ]; then
@@ -46,6 +48,7 @@ with_debounce
 ) &
 pid1=$!
 
+# 监控 taa_sys.txt 变化
 (
     while true; do
         ensure_taa_sys "$TAA_SYS_FILE"

@@ -1,28 +1,49 @@
+#!/system/bin/sh
 # sync.sh - 同步核心流程
 
 do_sync() {
     log_info "开始同步包列表"
     ensure_taa_sys "$TAA_SYS_FILE"
+
     local user_list="$(get_installed_packages)"
     local user_count="$(count_lines "$user_list")"
     local sys_count="$( [ -f "$TAA_SYS_FILE" ] && grep -c . "$TAA_SYS_FILE" 2>/dev/null || echo 0 )"
 
-    if [ "$user_count" -eq 0 ]; then
-        log_warn "第三方应用列表为空，跳过本次同步"
-        return
-    fi
+    [ "$user_count" -eq 0 ] && { log_warn "第三方应用列表为空，跳过本次同步"; return; }
 
     local tmp_file="$TARGET_BASE/.ts_tmp"
     merge_and_dedupe "$TAA_SYS_FILE" "$user_list" > "$tmp_file" 2>/dev/null
-    if [ -s "$tmp_file" ]; then
-        write_target_config "$tmp_file"
-        log_info "同步完成，系统白名单: $sys_count，第三方应用: $user_count"
-    else
-        log_warn "同步失败：合并结果为空"
-    fi
-    rm -f "$tmp_file" 2>/dev/null
+    [ -s "$tmp_file" ] || { log_warn "合并结果为空"; rm -f "$tmp_file"; return; }
+
+    case "$TARGET_TYPE" in
+        TS)
+            cp -f "$tmp_file" "$TARGET_BASE/target.txt" 2>/dev/null
+            chmod 644 "$TARGET_BASE/target.txt" 2>/dev/null
+            log_info "已更新 target.txt"
+            ;;
+        TEESIM)
+            local json="$TARGET_BASE/config.json"
+            if [ ! -f "$json" ]; then
+                log_err "config.json 不存在，跳过"
+                rm -f "$tmp_file"
+                return 1
+            fi
+            # 生成 apps 数组内容（带缩进）
+            local apps_json=$(sed 's/^/        "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
+            # 用 awk 替换 "apps" 数组
+            awk -v apps="$apps_json" '
+                /"apps"[ \t]*:/ { print "    \"apps\": ["; print apps; print "    ]"; next }
+                /]/ && in_apps { in_apps=0; next }
+                { if (!in_apps) print }
+            ' "$json" > "${json}.tmp" && mv -f "${json}.tmp" "$json"
+            chmod 644 "$json" 2>/dev/null
+            log_info "已更新 config.json"
+            ;;
+    esac
+    rm -f "$tmp_file"
 
     local current_time="$(date '+%H:%M')"
     local new_desc="✅ 运行中 (环境: ${TARGET_TYPE} | 系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time})"
     update_module_prop "$PROP_FILE" "$new_desc"
+    log_info "同步完成"
 }

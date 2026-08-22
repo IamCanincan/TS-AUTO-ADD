@@ -1,10 +1,14 @@
 #!/system/bin/sh
 SKIPUNZIP=0
+MODPATH="${0%/*}"
+PROP_FILE="$MODPATH/module.prop"
+export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
+
+. "$MODPATH/lib/common.sh" 2>/dev/null || { echo "❌ 无法加载 common.sh"; exit 1; }
+
 ui_print "================================================"
 ui_print "          TS-AUTO-ADD 安装程序"
 ui_print "================================================"
-
-. "$MODPATH/lib/common.sh" 2>/dev/null || abort "❌ 无法加载 common.sh"
 
 ui_print "[1/5] 检查环境兼容性"
 detect_target_env
@@ -22,12 +26,12 @@ inotify_info="$(find_inotify_cmd)"
 [ -z "$inotify_info" ] && abort "❌ 未找到 inotify 监控工具"
 ui_print "  可用组件: ${inotify_info#*:}"
 
-ui_print "[3/5] 初始化目录与权限"
-mkdir -p "$TARGET_BASE" 2>/dev/null
-set_perm_recursive "$MODPATH" 0 0 0755 0644 || true
-chmod 0755 "$MODPATH/service.sh" "$MODPATH/action.sh" "$MODPATH/post-fs-data.sh" 2>/dev/null
-ln -sf "$MODPATH/action.sh" "/data/adb/ts-sync" 2>/dev/null
-chmod 0755 "/data/adb/ts-sync" 2>/dev/null
+ui_print "[3/5] 设置权限与创建链接"
+chmod -R 755 "$MODPATH/lib" "$MODPATH/bin" 2>/dev/null
+chmod 755 "$MODPATH/service.sh" "$MODPATH/post-fs-data.sh" "$MODPATH/uninstall.sh" 2>/dev/null
+mkdir -p /data/adb 2>/dev/null
+ln -sf "$MODPATH/bin/action.sh" "/data/adb/ts-sync" 2>/dev/null
+chmod 755 "/data/adb/ts-sync" 2>/dev/null
 
 ui_print "[4/5] 生成初始配置"
 ensure_taa_sys "$TAA_SYS_FILE"
@@ -40,7 +44,52 @@ if [ "$user_count" -gt 0 ]; then
     tmp_file="$TARGET_BASE/.ts_tmp"
     merge_and_dedupe "$TAA_SYS_FILE" "$user_list" > "$tmp_file" 2>/dev/null
     if [ -s "$tmp_file" ]; then
-        write_target_config "$tmp_file" && ui_print "  ✅ 已写入 $env_name 配置文件" || ui_print "  ⚠️ 写入失败"
+        case "$TARGET_TYPE" in
+            TS)
+                cp -f "$tmp_file" "$TARGET_BASE/target.txt" 2>/dev/null
+                chmod 644 "$TARGET_BASE/target.txt" 2>/dev/null
+                ;;
+            TEESIM)
+                if [ ! -f "$TARGET_BASE/config.json" ]; then
+                    cat > "$TARGET_BASE/config.json" <<-'EOF'
+{
+  "profiles": {
+    "default": {
+      "keybox": "keybox.xml",
+      "mode": "patch",
+      "patchLevel": {
+        "system": "today",
+        "vendor": "YYYY-MM-05",
+        "boot": "YYYY-MM-05"
+      },
+      "osVersion": "",
+      "brand": "",
+      "device": "",
+      "product": "",
+      "manufacturer": "",
+      "model": "",
+      "serial": "",
+      "imei": "",
+      "meid": "",
+      "imei2": "",
+      "apps": [],
+      "autoIncludeNewApps": false
+    }
+  }
+}
+EOF
+                fi
+                apps_json=$(sed 's/^/        "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
+                awk -v apps="$apps_json" '
+                    /"apps"[ \t]*:/ { print "    \"apps\": ["; print apps; print "    ]"; next }
+                    /]/ && in_apps { in_apps=0; next }
+                    { if (!in_apps) print }
+                ' "$TARGET_BASE/config.json" > "${TARGET_BASE}/config.json.tmp"
+                mv -f "${TARGET_BASE}/config.json.tmp" "$TARGET_BASE/config.json"
+                chmod 644 "$TARGET_BASE/config.json"
+                ;;
+        esac
+        ui_print "  ✅ 已写入 $env_name 配置文件"
     else
         ui_print "  ⚠️ 未获取到有效应用列表"
     fi
@@ -58,5 +107,5 @@ ui_print "================================================"
 ui_print "  安装完成！"
 ui_print "  手动同步: /data/adb/ts-sync"
 ui_print "  停止服务: /data/adb/ts-sync --stop"
-ui_print "  建议重启设备"
+ui_print "  建议重启设备使服务生效"
 ui_print "================================================"
