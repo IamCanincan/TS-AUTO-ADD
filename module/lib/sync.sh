@@ -41,17 +41,16 @@ do_sync() {
                 local err_log="${json}.awk_err"
                 local tmp_out="${json}.tmp"
 
-                # 使用 awk，用 index() 代替正则匹配特殊字符
+                # 使用 index() 替代正则，完全避免特殊字符问题
                 awk -v new_apps="$apps_json" '
-                    BEGIN { in_default=0; in_apps=0; skip=0; printed=0 }
+                    BEGIN { in_default=0; skip=0; printed=0; }
                     {
-                        # 检测进入 default 块：行包含 "default" 且包含 {（使用 index）
-                        if (index($0, "\"default\"") && index($0, "{")) {
+                        # 检测进入 default 块：行包含 "default" 且包含 "{"
+                        if (!in_default && index($0, "\"default\"") && index($0, "{")) {
                             in_default=1
                         }
-                        # 如果当前行包含 "apps" 且位于 default 块内
+                        # 在 default 块内检测 "apps"
                         if (in_default && index($0, "\"apps\"")) {
-                            # 输出新的 apps 数组
                             print "      \"apps\": ["
                             print new_apps
                             print "      ],"
@@ -59,18 +58,16 @@ do_sync() {
                             skip=1
                             next
                         }
-                        # 如果 skip 标志为 1，跳过当前行直到遇到 ]（表示数组结束）
+                        # 跳过原 apps 数组内容直到遇到 "]"
                         if (skip && index($0, "]")) {
                             skip=0
                             next
                         }
-                        if (skip) {
-                            next
-                        }
-                        # 打印所有其他行
+                        if (skip) next
+                        # 正常打印其他行
                         print
-                        # 当 default 块结束时（遇到 } 且该行为顶格缩进 4 空格）
-                        if (in_default && $0 ~ /^    }/) {
+                        # 检测 default 块结束：缩进为 4 空格且包含 "}"
+                        if (in_default && substr($0, 1, 4) == "    " && index($0, "}")) {
                             in_default=0
                         }
                     }
