@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# 获取模块真实路径
+# 获取模块真实路径（兼容符号链接）
 if [ -L "$0" ]; then
     REAL_PATH="$(readlink -f "$0" 2>/dev/null)"
     if [ -n "$REAL_PATH" ]; then
@@ -15,22 +15,29 @@ export MODDIR
 PROP_FILE="$MODDIR/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
-. "$MODDIR/lib/common.sh" || { echo "❌ 加载失败"; exit 1; }
+. "$MODDIR/lib/common.sh" || { echo "❌ 加载 common.sh 失败"; exit 1; }
 
-[ "$(id -u)" -ne 0 ] && { echo "❌ 需要 root"; exit 1; }
+[ "$(id -u)" -ne 0 ] && { echo "❌ 需要 root 权限"; exit 1; }
 
+# 检测环境
 detect_target_env
-case $? in 0|1) ;; *) echo "❌ 无环境"; exit 1 ;; esac
+env_status=$?
+case $env_status in
+    0) echo "✅ 检测到 TrickyStore" ;;
+    1) echo "✅ 检测到 TeeSimulator" ;;
+    2) echo "❌ 同时检测到 TrickyStore 与 TeeSimulator，冲突" ; exit 1 ;;
+    3) echo "❌ 未检测到 TrickyStore 或 TeeSimulator" ; echo "   请先安装 TrickyStore 或 TeeSimulator 模块"; exit 1 ;;
+esac
 
 case "$1" in
     --status|-s) show_status; exit 0 ;;
-    --log|-l)    [ -f "$LOG_FILE" ] && tail -n 20 "$LOG_FILE" || echo "⚠️ 无日志"; exit 0 ;;
+    --log|-l)    [ -f "$LOG_FILE" ] && tail -n 20 "$LOG_FILE" || echo "⚠️ 日志不存在"; exit 0 ;;
     --stop|-t)   stop_daemon; exit 0 ;;
     --help|-h)   echo "用法: $0 [--status|--log|--stop|--help]"; exit 0 ;;
 esac
 
-echo "🔄 手动同步..."
-acquire_lock "$TARGET_BASE" || { echo "❌ 锁失败"; exit 1; }
+echo "🔄 开始手动同步..."
+acquire_lock "$TARGET_BASE" || { echo "❌ 获取锁失败"; exit 1; }
 do_sync
 release_lock "$TARGET_BASE"
-echo "✅ 完成"
+echo "✅ 手动同步完成"
