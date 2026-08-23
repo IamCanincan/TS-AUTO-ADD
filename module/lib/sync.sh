@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# sync.sh - 使用单行替换更新 apps
+# sync.sh - 稳定版，确保 config.json 的 apps 为单行并替换
 
 do_sync() {
     log_info "开始同步包列表"
@@ -66,7 +66,39 @@ do_sync() {
   }
 }
 EOF
-                apps_count=1
+            fi
+
+            # 检查 apps 行是否为单行格式（"apps": [ ... ],）
+            if ! grep -q '"apps": \[.*\]' "$json"; then
+                log_warn "apps 数组不是单行格式，重置为默认模板"
+                cat > "$json" <<-EOF
+{
+  "version": 1,
+  "profiles": {
+    "default": {
+      "keybox": "keybox.xml",
+      "mode": "patch",
+      "patchLevel": {
+        "system": "today",
+        "vendor": "YYYY-MM-05",
+        "boot": "YYYY-MM-05"
+      },
+      "osVersion": "",
+      "brand": "",
+      "device": "",
+      "product": "",
+      "manufacturer": "",
+      "model": "",
+      "serial": "",
+      "imei": "",
+      "meid": "",
+      "imei2": "",
+      "apps": [],
+      "autoIncludeNewApps": false
+    }
+  }
+}
+EOF
             fi
 
             # 生成紧凑的 apps 列表行
@@ -83,15 +115,61 @@ EOF
             done < "$tmp_file"
             apps_line="$apps_line ],"
 
+            # 转义特殊字符
             escaped_apps_line=$(printf '%s\n' "$apps_line" | sed 's/[\/&]/\\&/g')
+
+            # 备份原文件
+            cp -f "$json" "${json}.bak"
+
+            # 执行替换（仅替换第一个匹配的单行）
             sed -i "0,/\"apps\": [^]]*,/s//$escaped_apps_line/" "$json"
-            if [ $? -eq 0 ]; then
+
+            # 验证替换是否成功（比较备份与当前文件）
+            if cmp -s "$json" "${json}.bak"; then
+                log_err "替换 apps 失败（文件未变化），强制重置为模板并重新替换"
+                cat > "$json" <<-EOF
+{
+  "version": 1,
+  "profiles": {
+    "default": {
+      "keybox": "keybox.xml",
+      "mode": "patch",
+      "patchLevel": {
+        "system": "today",
+        "vendor": "YYYY-MM-05",
+        "boot": "YYYY-MM-05"
+      },
+      "osVersion": "",
+      "brand": "",
+      "device": "",
+      "product": "",
+      "manufacturer": "",
+      "model": "",
+      "serial": "",
+      "imei": "",
+      "meid": "",
+      "imei2": "",
+      "apps": [],
+      "autoIncludeNewApps": false
+    }
+  }
+}
+EOF
+                # 再次替换
+                sed -i "0,/\"apps\": [^]]*,/s//$escaped_apps_line/" "$json"
+                if [ $? -eq 0 ]; then
+                    write_ok=0
+                    log_info "已更新 config.json (强制重置后替换)"
+                else
+                    write_ok=1
+                    log_err "替换仍失败"
+                fi
+            else
                 write_ok=0
                 log_info "已更新 config.json (apps 列表)"
-            else
-                log_err "替换 apps 列表失败"
-                write_ok=1
             fi
+
+            rm -f "${json}.bak"
             ;;
     esac
 
