@@ -38,50 +38,64 @@ do_sync() {
             local apps_json=$(sed 's/^/      "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
 
             if command -v awk >/dev/null 2>&1; then
-                # 使用 awk 逐行处理，不依赖正则特殊字符，仅字符串匹配
+                # 捕获错误输出
+                local err_log="${json}.awk_err"
+                local tmp_out="${json}.tmp"
+
+                # 执行 awk，将 stderr 重定向到错误文件
                 awk -v new_apps="$apps_json" '
                     BEGIN { in_default=0; in_apps=0; skip=0; printed=0 }
-                    # 检测进入 default 块：行包含 "default" 且后面跟 {
-                    $0 ~ /"default"/ && $0 ~ /{/ { in_default=1 }
-                    # 如果当前行包含 "apps" 且位于 default 块内
-                    in_default && $0 ~ /"apps"/ {
-                        # 输出新的 apps 数组
-                        print "      \"apps\": ["
-                        print new_apps
-                        print "      ],"
-                        printed=1
-                        skip=1
-                        next
-                    }
-                    # 如果 skip 标志为 1，跳过当前行直到遇到 ]（表示数组结束）
-                    skip && $0 ~ /]/ {
-                        skip=0
-                        next
-                    }
-                    skip { next }
-                    # 打印所有其他行
-                    { print }
-                    # 当 default 块结束时（遇到 } 且缩进为 4 个空格）
-                    in_default && $0 ~ /^    }/ {
-                        in_default=0
+                    {
+                        # 检测进入 default 块：行包含 "default" 且后面跟 {
+                        if ($0 ~ /"default"/ && $0 ~ /{/) {
+                            in_default=1
+                        }
+                        # 如果当前行包含 "apps" 且位于 default 块内
+                        if (in_default && $0 ~ /"apps"/) {
+                            # 输出新的 apps 数组
+                            print "      \"apps\": ["
+                            print new_apps
+                            print "      ],"
+                            printed=1
+                            skip=1
+                            next
+                        }
+                        # 如果 skip 标志为 1，跳过当前行直到遇到 ]（表示数组结束）
+                        if (skip && $0 ~ /]/) {
+                            skip=0
+                            next
+                        }
+                        if (skip) {
+                            next
+                        }
+                        # 打印所有其他行
+                        print
+                        # 当 default 块结束时（遇到 } 且该行为顶格缩进 4 空格）
+                        if (in_default && $0 ~ /^    }/) {
+                            in_default=0
+                        }
                     }
                     END {
-                        # 如果从未输出 apps，则添加
                         if (!printed) {
                             print "      \"apps\": ["
                             print new_apps
                             print "      ],"
                         }
                     }
-                ' "$json" > "${json}.tmp" 2>/dev/null
+                ' "$json" > "$tmp_out" 2> "$err_log"
 
-                if [ $? -eq 0 ] && [ -s "${json}.tmp" ]; then
-                    mv -f "${json}.tmp" "$json" && chmod 644 "$json" 2>/dev/null
+                if [ $? -eq 0 ] && [ -s "$tmp_out" ]; then
+                    mv -f "$tmp_out" "$json" && chmod 644 "$json" 2>/dev/null
                     write_ok=$?
                     log_info "已更新 config.json (只修改 default profile)"
                 else
-                    log_err "awk 处理失败，保留原文件"
-                    rm -f "${json}.tmp" 2>/dev/null
+                    # 记录错误信息
+                    if [ -s "$err_log" ]; then
+                        log_err "awk 错误详情: $(cat "$err_log")"
+                    else
+                        log_err "awk 处理失败，但无具体错误输出"
+                    fi
+                    rm -f "$tmp_out" "$err_log" 2>/dev/null
                     write_ok=1
                 fi
             else
