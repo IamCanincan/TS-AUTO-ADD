@@ -38,13 +38,14 @@ do_sync() {
             local apps_json=$(sed 's/^/      "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
 
             if command -v awk >/dev/null 2>&1; then
-                # 使用 awk 精确定位 "profiles" -> "default" -> "apps" 并替换
-                # 所有特殊字符均已正确转义 (\[, \], \{, \})
+                # 使用 awk 逐行处理，不依赖正则特殊字符，仅字符串匹配
                 awk -v new_apps="$apps_json" '
-                    BEGIN { in_profiles=0; in_default=0; printed=0; skip=0 }
-                    /"profiles"[ \t]*:/ { in_profiles=1; print; next }
-                    in_profiles && /"default"[ \t]*:/ { in_default=1; print; next }
-                    in_default && /"apps"[ \t]*:/ {
+                    BEGIN { in_default=0; in_apps=0; skip=0; printed=0 }
+                    # 检测进入 default 块：行包含 "default" 且后面跟 {
+                    $0 ~ /"default"/ && $0 ~ /{/ { in_default=1 }
+                    # 如果当前行包含 "apps" 且位于 default 块内
+                    in_default && $0 ~ /"apps"/ {
+                        # 输出新的 apps 数组
                         print "      \"apps\": ["
                         print new_apps
                         print "      ],"
@@ -52,24 +53,37 @@ do_sync() {
                         skip=1
                         next
                     }
-                    skip && /\]/ {
+                    # 如果 skip 标志为 1，跳过当前行直到遇到 ]（表示数组结束）
+                    skip && $0 ~ /]/ {
                         skip=0
                         next
                     }
                     skip { next }
+                    # 打印所有其他行
                     { print }
-                    in_default && /\}/ && !skip { in_default=0 }
-                    in_profiles && /\}/ && !skip { in_profiles=0 }
+                    # 当 default 块结束时（遇到 } 且缩进为 4 个空格）
+                    in_default && $0 ~ /^    }/ {
+                        in_default=0
+                    }
                     END {
+                        # 如果从未输出 apps，则添加
                         if (!printed) {
                             print "      \"apps\": ["
                             print new_apps
                             print "      ],"
                         }
                     }
-                ' "$json" > "${json}.tmp" && mv -f "${json}.tmp" "$json" && chmod 644 "$json" 2>/dev/null
-                write_ok=$?
-                log_info "已更新 config.json (只修改 default profile)"
+                ' "$json" > "${json}.tmp" 2>/dev/null
+
+                if [ $? -eq 0 ] && [ -s "${json}.tmp" ]; then
+                    mv -f "${json}.tmp" "$json" && chmod 644 "$json" 2>/dev/null
+                    write_ok=$?
+                    log_info "已更新 config.json (只修改 default profile)"
+                else
+                    log_err "awk 处理失败，保留原文件"
+                    rm -f "${json}.tmp" 2>/dev/null
+                    write_ok=1
+                fi
             else
                 log_warn "awk 不可用，跳过 config.json 更新"
                 write_ok=1
