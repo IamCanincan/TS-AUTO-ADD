@@ -41,49 +41,60 @@ do_sync() {
                 local err_log="${json}.awk_err"
                 local tmp_out="${json}.tmp"
 
-                # 使用 index() 替代正则，完全避免特殊字符问题
+                # 严谨替换：只保留一个 apps 数组在 default 块内
                 awk -v new_apps="$apps_json" '
-                    BEGIN { in_default=0; skip=0; printed=0; }
+                    BEGIN { in_default=0; apps_printed=0; skip_until_close=0 }
                     {
-                        # 检测进入 default 块：行包含 "default" 且包含 "{"
+                        # 检测进入 default 块
                         if (!in_default && index($0, "\"default\"") && index($0, "{")) {
                             in_default=1
                         }
-                        # 在 default 块内检测 "apps"
-                        if (in_default && index($0, "\"apps\"")) {
-                            print "      \"apps\": ["
-                            print new_apps
-                            print "      ],"
-                            printed=1
-                            skip=1
-                            next
+                        # 在 default 块内处理 apps
+                        if (in_default) {
+                            # 检测到 "apps" 行
+                            if (index($0, "\"apps\"")) {
+                                if (apps_printed == 0) {
+                                    # 尚未输出新数组，则输出新数组
+                                    print "      \"apps\": ["
+                                    print new_apps
+                                    print "      ],"
+                                    apps_printed=1
+                                    skip_until_close=1
+                                    next
+                                } else {
+                                    # 已经输出过，跳过该行及其数组内容
+                                    skip_until_close=1
+                                    next
+                                }
+                            }
+                            # 如果正在跳过数组内容，直到遇到 "]"
+                            if (skip_until_close) {
+                                if (index($0, "]")) {
+                                    skip_until_close=0
+                                }
+                                next
+                            }
+                            # 检测 default 块结束：缩进为 4 空格且包含 "}"
+                            if (in_default && substr($0, 1, 4) == "    " && index($0, "}")) {
+                                in_default=0
+                                # 块结束时，如果还没有输出 apps，则补一个空数组
+                                if (apps_printed == 0) {
+                                    print "      \"apps\": ["
+                                    print new_apps
+                                    print "      ],"
+                                    apps_printed=1
+                                }
+                            }
                         }
-                        # 跳过原 apps 数组内容直到遇到 "]"
-                        if (skip && index($0, "]")) {
-                            skip=0
-                            next
-                        }
-                        if (skip) next
-                        # 正常打印其他行
+                        # 打印当前行（除非被跳过）
                         print
-                        # 检测 default 块结束：缩进为 4 空格且包含 "}"
-                        if (in_default && substr($0, 1, 4) == "    " && index($0, "}")) {
-                            in_default=0
-                        }
-                    }
-                    END {
-                        if (!printed) {
-                            print "      \"apps\": ["
-                            print new_apps
-                            print "      ],"
-                        }
                     }
                 ' "$json" > "$tmp_out" 2> "$err_log"
 
                 if [ $? -eq 0 ] && [ -s "$tmp_out" ]; then
                     mv -f "$tmp_out" "$json" && chmod 644 "$json" 2>/dev/null
                     write_ok=$?
-                    log_info "已更新 config.json (只修改 default profile)"
+                    log_info "已更新 config.json (只修改 default profile，删除多余 apps)"
                 else
                     if [ -s "$err_log" ]; then
                         log_err "awk 错误详情: $(cat "$err_log")"
