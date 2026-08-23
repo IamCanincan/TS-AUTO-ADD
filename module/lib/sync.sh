@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# sync.sh - 稳定版，精确替换 default profile 中的 apps 数组
+# sync.sh - 使用单行替换方式更新 apps 数组
 
 do_sync() {
     log_info "开始同步包列表"
@@ -34,7 +34,7 @@ do_sync() {
                 return 0
             fi
 
-            # 检查 apps 出现次数，若异常则重置
+            # 检查 apps 出现次数
             local apps_count=$(grep -c '"apps"' "$json" 2>/dev/null || echo 0)
             if [ "$apps_count" -ne 1 ]; then
                 log_warn "config.json 结构异常（apps 出现 $apps_count 次），重置为默认模板"
@@ -66,79 +66,33 @@ do_sync() {
   }
 }
 EOF
+                apps_count=1
             fi
 
-            # 生成 apps 数组内容（缩进 6 个空格）
-            local apps_json=$(sed 's/^/      "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
-
-            if command -v awk >/dev/null 2>&1; then
-                local err_log="${json}.awk_err"
-                local tmp_out="${json}.tmp"
-
-                # 使用 awk 精确提取 default 块，替换其中的 apps 数组
-                awk -v new_apps="$apps_json" '
-                    BEGIN { in_default=0; in_apps=0; printed=0; skip=0; }
-                    {
-                        # 检测进入 default 块（仅当行包含 "default" 且后面紧跟 {）
-                        if (!in_default && index($0, "\"default\"") && index($0, "{")) {
-                            in_default=1
-                        }
-                        if (in_default) {
-                            # 检测 "apps" 字段（必须是行首带缩进，且后面有冒号）
-                            if (index($0, "\"apps\"") && index($0, ":")) {
-                                if (printed == 0) {
-                                    # 第一次遇到，输出新数组
-                                    print "      \"apps\": ["
-                                    print new_apps
-                                    print "      ],"
-                                    printed=1
-                                    skip=1  # 跳过原数组内容
-                                    next
-                                } else {
-                                    # 已经输出过，直接跳过这行和后续数组
-                                    skip=1
-                                    next
-                                }
-                            }
-                            if (skip) {
-                                # 跳过直到遇到 ]
-                                if (index($0, "]")) {
-                                    skip=0
-                                }
-                                next
-                            }
-                            # 检测 default 块结束：缩进 4 空格且包含 }
-                            if (in_default && substr($0, 1, 4) == "    " && index($0, "}")) {
-                                in_default=0
-                                if (printed == 0) {
-                                    # 如果从未输出 apps，则补一个空数组
-                                    print "      \"apps\": ["
-                                    print new_apps
-                                    print "      ],"
-                                    printed=1
-                                }
-                            }
-                        }
-                        # 打印当前行（除非被跳过）
-                        print
-                    }
-                ' "$json" > "$tmp_out" 2> "$err_log"
-
-                if [ $? -eq 0 ] && [ -s "$tmp_out" ]; then
-                    mv -f "$tmp_out" "$json" && chmod 644 "$json" 2>/dev/null
-                    write_ok=$?
-                    log_info "已更新 config.json (只修改 default profile)"
+            # 生成紧凑的 apps 列表行
+            local apps_line="      \"apps\": ["
+            local first=1
+            while read -r pkg; do
+                [ -z "$pkg" ] && continue
+                if [ $first -eq 1 ]; then
+                    apps_line="$apps_line \"$pkg\""
+                    first=0
                 else
-                    if [ -s "$err_log" ]; then
-                        log_err "awk 错误详情: $(cat "$err_log")"
-                    else
-                        log_err "awk 处理失败，但无具体错误输出"
-                    fi
-                    rm -f "$tmp_out" "$err_log" 2>/dev/null
-                    write_ok=1
+                    apps_line="$apps_line, \"$pkg\""
                 fi
+            done < "$tmp_file"
+            apps_line="$apps_line ],"
+
+            # 转义 apps_line 中的特殊字符（/、&、\）以供 sed 使用
+            escaped_apps_line=$(printf '%s\n' "$apps_line" | sed 's/[\/&]/\\&/g')
+
+            # 使用 sed 替换 "apps": [ ... ], 这一行（仅替换第一次匹配）
+            sed -i "0,/\"apps\": [^]]*,/s//$escaped_apps_line/" "$json"
+            if [ $? -eq 0 ]; then
+                write_ok=0
+                log_info "已更新 config.json (apps 列表)"
             else
-                log_warn "awk 不可用，跳过 config.json 更新"
+                log_err "替换 apps 列表失败"
                 write_ok=1
             fi
             ;;
