@@ -1,0 +1,9 @@
+# 规则文件
+# + 包含，- 排除，无前缀默认包含
++android
++com.google.android.gms
++com.google.android.gsf
++com.android.vending
+
+# 排除示例（取消注释生效）
+# -com.example.unwanted
