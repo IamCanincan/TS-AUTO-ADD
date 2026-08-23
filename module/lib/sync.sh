@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# sync.sh - 同步核心，包含自动修复损坏 config.json
+# sync.sh - 稳定版，精确替换 default profile 中的 apps 数组
 
 do_sync() {
     log_info "开始同步包列表"
@@ -34,7 +34,7 @@ do_sync() {
                 return 0
             fi
 
-            # 检测 config.json 是否损坏（apps 出现次数 != 1）
+            # 检查 apps 出现次数，若异常则重置
             local apps_count=$(grep -c '"apps"' "$json" 2>/dev/null || echo 0)
             if [ "$apps_count" -ne 1 ]; then
                 log_warn "config.json 结构异常（apps 出现 $apps_count 次），重置为默认模板"
@@ -75,38 +75,43 @@ EOF
                 local err_log="${json}.awk_err"
                 local tmp_out="${json}.tmp"
 
+                # 使用 awk 精确提取 default 块，替换其中的 apps 数组
                 awk -v new_apps="$apps_json" '
-                    BEGIN { in_default=0; printed=0; skip=0 }
+                    BEGIN { in_default=0; in_apps=0; printed=0; skip=0; }
                     {
-                        # 检测进入 default 块
+                        # 检测进入 default 块（仅当行包含 "default" 且后面紧跟 {）
                         if (!in_default && index($0, "\"default\"") && index($0, "{")) {
                             in_default=1
                         }
                         if (in_default) {
-                            # 检测 apps 行
+                            # 检测 "apps" 字段（必须是行首带缩进，且后面有冒号）
                             if (index($0, "\"apps\"") && index($0, ":")) {
-                                if (!printed) {
+                                if (printed == 0) {
+                                    # 第一次遇到，输出新数组
                                     print "      \"apps\": ["
                                     print new_apps
                                     print "      ],"
                                     printed=1
-                                    skip=1
+                                    skip=1  # 跳过原数组内容
                                     next
                                 } else {
+                                    # 已经输出过，直接跳过这行和后续数组
                                     skip=1
                                     next
                                 }
                             }
                             if (skip) {
+                                # 跳过直到遇到 ]
                                 if (index($0, "]")) {
                                     skip=0
                                 }
                                 next
                             }
-                            # 检测 default 块结束（缩进 4 空格 + "}"）
+                            # 检测 default 块结束：缩进 4 空格且包含 }
                             if (in_default && substr($0, 1, 4) == "    " && index($0, "}")) {
                                 in_default=0
-                                if (!printed) {
+                                if (printed == 0) {
+                                    # 如果从未输出 apps，则补一个空数组
                                     print "      \"apps\": ["
                                     print new_apps
                                     print "      ],"
@@ -114,6 +119,7 @@ EOF
                                 }
                             }
                         }
+                        # 打印当前行（除非被跳过）
                         print
                     }
                 ' "$json" > "$tmp_out" 2> "$err_log"
