@@ -38,20 +38,19 @@ do_sync() {
             local apps_json=$(sed 's/^/      "/; s/$/",/' "$tmp_file" | sed '$ s/,$//')
 
             if command -v awk >/dev/null 2>&1; then
-                # 捕获错误输出
                 local err_log="${json}.awk_err"
                 local tmp_out="${json}.tmp"
 
-                # 执行 awk，将 stderr 重定向到错误文件
+                # 使用 awk，用 index() 代替正则匹配特殊字符
                 awk -v new_apps="$apps_json" '
                     BEGIN { in_default=0; in_apps=0; skip=0; printed=0 }
                     {
-                        # 检测进入 default 块：行包含 "default" 且后面跟 {
-                        if ($0 ~ /"default"/ && $0 ~ /{/) {
+                        # 检测进入 default 块：行包含 "default" 且包含 {（使用 index）
+                        if (index($0, "\"default\"") && index($0, "{")) {
                             in_default=1
                         }
                         # 如果当前行包含 "apps" 且位于 default 块内
-                        if (in_default && $0 ~ /"apps"/) {
+                        if (in_default && index($0, "\"apps\"")) {
                             # 输出新的 apps 数组
                             print "      \"apps\": ["
                             print new_apps
@@ -61,7 +60,7 @@ do_sync() {
                             next
                         }
                         # 如果 skip 标志为 1，跳过当前行直到遇到 ]（表示数组结束）
-                        if (skip && $0 ~ /]/) {
+                        if (skip && index($0, "]")) {
                             skip=0
                             next
                         }
@@ -89,7 +88,6 @@ do_sync() {
                     write_ok=$?
                     log_info "已更新 config.json (只修改 default profile)"
                 else
-                    # 记录错误信息
                     if [ -s "$err_log" ]; then
                         log_err "awk 错误详情: $(cat "$err_log")"
                     else
