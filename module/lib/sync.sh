@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# sync.sh - 使用单行替换方式更新 apps 数组
+# sync.sh - 使用单行替换更新 apps
 
 do_sync() {
     log_info "开始同步包列表"
@@ -83,10 +83,7 @@ EOF
             done < "$tmp_file"
             apps_line="$apps_line ],"
 
-            # 转义 apps_line 中的特殊字符（/、&、\）以供 sed 使用
             escaped_apps_line=$(printf '%s\n' "$apps_line" | sed 's/[\/&]/\\&/g')
-
-            # 使用 sed 替换 "apps": [ ... ], 这一行（仅替换第一次匹配）
             sed -i "0,/\"apps\": [^]]*,/s//$escaped_apps_line/" "$json"
             if [ $? -eq 0 ]; then
                 write_ok=0

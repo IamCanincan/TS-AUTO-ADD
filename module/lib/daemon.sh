@@ -9,7 +9,7 @@ with_debounce() {
         [ $((now - last)) -lt "$DEBOUNCE_SECONDS" ] && { log_info "忽略重复事件"; return; }
     fi
     echo "$now" > "$debounce_file"
-    acquire_lock "$TARGET_BASE" || { log_err "获取锁失败"; return; }
+    acquire_lock "$TARGET_BASE" || { log_err "获取锁失败，放弃本次同步"; return; }
     do_sync
     release_lock "$TARGET_BASE"
 }
