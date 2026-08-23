@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# 设置日志路径（在加载 common.sh 前定义，以便即使加载失败也能记录）
+# 设置日志路径
 LOG_FILE="/data/adb/ts_auto.log"
 log_force() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE" 2>/dev/null
@@ -12,87 +12,48 @@ export MODDIR
 PROP_FILE="$MODDIR/module.prop"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
-# 尝试加载 common.sh
+# 加载 common.sh
 if [ -f "$MODDIR/lib/common.sh" ]; then
     log_force "加载 common.sh..."
     . "$MODDIR/lib/common.sh" 2>>"$LOG_FILE"
     if [ $? -eq 0 ]; then
         log_force "common.sh 加载成功"
     else
-        log_force "common.sh 加载失败，错误码 $?"
-        # 定义最小函数集（避免后续引用出错）
-        log_info() { log_force "[INFO] $*"; }
-        log_warn() { log_force "[WARN] $*"; }
-        log_err() { log_force "[ERR] $*"; }
-        update_module_prop() { return 0; }
-        detect_target_env() { return 3; }
-        find_inotify_cmd() { return 1; }
-        with_debounce() { log_warn "with_debounce 未定义"; }
-        do_sync() { log_warn "do_sync 未定义"; }
-        ensure_taa_sys() { return 0; }
+        log_force "common.sh 加载失败"
+        # 定义最小函数集（略）
+        exit 1
     fi
 else
-    log_force "common.sh 不存在: $MODDIR/lib/common.sh"
-    log_info() { log_force "[INFO] $*"; }
-    log_warn() { log_force "[WARN] $*"; }
-    log_err() { log_force "[ERR] $*"; }
-    update_module_prop() { return 0; }
-    detect_target_env() { return 3; }
-    find_inotify_cmd() { return 1; }
-    with_debounce() { log_warn "with_debounce 未定义"; }
-    do_sync() { log_warn "do_sync 未定义"; }
-    ensure_taa_sys() { return 0; }
+    log_force "common.sh 不存在"
+    exit 1
 fi
 
-# 清理残留文件（若有变量未定义则忽略）
+# 清理残留
 [ -n "$TARGET_BASE" ] && {
     rm -f "$TARGET_BASE/.ts_tmp" "$TARGET_BASE/.lock_dir" "$TARGET_BASE/.debounce" 2>/dev/null
     pids_file="$TARGET_BASE/.ts_daemon_pids.list"
     [ -f "$pids_file" ] && { while read -r pid; do kill -9 "$pid" 2>/dev/null; done < "$pids_file"; rm -f "$pids_file"; }
 }
 
-# 等待系统启动完成
-log_force "等待 sys.boot_completed..."
-until [ "$(getprop sys.boot_completed)" = "1" ]; do
-    sleep 2
-    log_force "sys.boot_completed 未就绪，继续等待"
-done
-log_force "系统已启动"
+# 等待系统启动
+until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
+log_info "系统已启动"
 
-# 定义启动函数
-start_daemon() {
-    log_info "尝试启动守护进程..."
+# 启动守护进程（循环重试）
+while true; do
     detect_target_env
-    local env_status=$?
-    log_info "环境检测结果: $env_status"
+    env_status=$?
     case $env_status in
-        2) log_err "冲突：TrickyStore 与 TeeSimulator 同时存在"; return 1 ;;
-        3) log_err "未检测到目标环境"; return 1 ;;
+        2) log_err "冲突"; sleep 10; continue ;;
+        3) log_err "无环境"; sleep 10; continue ;;
     esac
-    log_info "目标环境: $TARGET_TYPE, 基础目录: $TARGET_BASE"
-
-    if [ "$TARGET_TYPE" = "TEESIM" ] && [ ! -f "$TARGET_BASE/config.json" ]; then
-        log_err "TeeSimulator config.json 不存在"
-        return 1
-    fi
-
     inotify_info="$(find_inotify_cmd)"
-    if [ -z "$inotify_info" ]; then
-        log_err "inotify 工具不可用"
-        return 1
-    fi
+    [ -z "$inotify_info" ] && { log_err "无inotify"; sleep 10; continue; }
     inotify_mode="${inotify_info%%:*}"
     inotify_cmd="${inotify_info#*:}"
-    log_info "inotify 模式: $inotify_mode, 命令: $inotify_cmd"
 
-    # 执行首次同步
     log_info "执行首次同步"
-    if command -v with_debounce >/dev/null 2>&1; then
-        with_debounce
-    else
-        log_warn "with_debounce 未定义，直接调用 do_sync"
-        do_sync
-    fi
+    with_debounce
 
     # 启动两个监控进程
     (
@@ -133,18 +94,7 @@ start_daemon() {
     echo "$pid2" >> "$pids_file"
     log_info "守护进程已启动 (PID: $pid1, $pid2)"
     update_module_prop "$PROP_FILE" "✅ 运行中 (环境: ${TARGET_TYPE})"
-    return 0
-}
-
-# 循环尝试启动
-while true; do
-    if start_daemon; then
-        log_info "守护进程启动成功，退出循环"
-        break
-    else
-        log_warn "启动失败，等待 10 秒后重试..."
-        sleep 10
-    fi
+    break
 done
 
 log_force "service.sh 正常退出"

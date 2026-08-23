@@ -1,6 +1,5 @@
 #!/system/bin/sh
 MODDIR="${0%/*}"
-PROP_FILE="$MODDIR/module.prop"
 [ -f "$MODDIR/lib/common.sh" ] && . "$MODDIR/lib/common.sh" 2>/dev/null
 
 pkill -f "ts-auto-add" 2>/dev/null
