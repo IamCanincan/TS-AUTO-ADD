@@ -43,21 +43,22 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE" 2>/dev/null
 }
 
-# 环境检测（缓存结果）
-CACHED_ENV=0
+# 环境检测：探测 TrickyStore / TeeSimulator
+# 返回值：0=TrickyStore 1=TeeSimulator 2=同时存在(冲突) 3=未检测到
 detect_env() {
-    [ $CACHED_ENV -eq 1 ] && return
     local ts=0 te=0
-    [ -d "$TS_BASE" ] || [ -d "/data/adb/modules/tricky_store" ] && ts=1
-    [ -d "$TEESIM_BASE" ] || [ -d "/data/adb/modules/teesim" ] && te=1
-    [ $ts -eq 1 ] && [ $te -eq 1 ] && { CACHED_ENV=1; return 2; }
+    { [ -d "$TS_BASE" ] || [ -d "/data/adb/modules/tricky_store" ]; } && ts=1
+    { [ -d "$TEESIM_BASE" ] || [ -d "/data/adb/modules/teesim" ]; } && te=1
+    if [ $ts -eq 1 ] && [ $te -eq 1 ]; then
+        return 2
+    fi
     if [ $ts -eq 1 ]; then
-        TARGET="TS"; BASE="$TS_BASE"; TAA="$TS_BASE/taa_sys.txt"; CACHED_ENV=1; return 0
+        TARGET="TS"; BASE="$TS_BASE"; TAA="$TS_BASE/taa_sys.txt"; return 0
     fi
     if [ $te -eq 1 ]; then
-        TARGET="TEESIM"; BASE="$TEESIM_BASE"; TAA="$TEESIM_BASE/taa_sys.txt"; CACHED_ENV=1; return 1
+        TARGET="TEESIM"; BASE="$TEESIM_BASE"; TAA="$TEESIM_BASE/taa_sys.txt"; return 1
     fi
-    CACHED_ENV=1; return 3
+    return 3
 }
 
 # 文件锁
@@ -99,6 +100,8 @@ has_package_changed() {
 merge_rules() {
     local out="$1"
     : > "$out"
+    : > "${RUNDIR}/include.tmp"
+    : > "${RUNDIR}/exclude.tmp"
 
     if [ -f "$RULES_FILE" ]; then
         grep -vE '^\s*(#|$)' "$RULES_FILE" | while read -r line; do
@@ -133,12 +136,12 @@ merge_rules() {
     fi
 }
 
-# 确保 TeeSim config.json 存在
+# 确保 TeeSim config.json 存在（已存在则不动，尊重用户自定义字段）
 ensure_json() {
     [ -f "$TEESIM_BASE/config.json" ] && grep -q '"profiles"' "$TEESIM_BASE/config.json" 2>/dev/null && return
     mkdir -p "$TEESIM_BASE"
     cat > "$TEESIM_BASE/config.json" <<-'EOF'
-{"version":1,"profiles":{"default":{"keybox":"keybox.xml","mode":"patch","patchLevel":{"system":"today","vendor":"YYYY-MM-05","boot":"YYYY-MM-05"},"osVersion":"","brand":"","device":"","product":"","manufacturer":"","model":"","serial":"","imei":"","meid":"","imei2":"","apps":[],"autoIncludeNewApps":false}}}
+{"version":1,"profiles":{"default":{"keybox":"keybox.xml","mode":"patch","patchLevel":{"system":"today","vendor":"YYYY-MM-05","boot":"YYYY-MM-05"},"osVersion":"","brand":"","device":"","product":"","manufacturer":"","model":"","serial":"","imei":"","meid":"","imei2":"","apps":["com.android.vending","com.google.android.gms","com.google.android.gsf"]}}}
 EOF
     chmod 644 "$TEESIM_BASE/config.json"
 }
@@ -159,27 +162,35 @@ do_sync() {
             ;;
         TEESIM)
             ensure_json
-            local inner=$(awk '{printf "%s\"%s\"", (NR>1?",":""), $0}' "$tmp")
-            awk -v apps="$inner" '
+            local inner
+            inner="$(awk '{printf "%s\"%s\"", (NR>1?",":""), $0}' "$tmp")"
+            if awk -v apps="$inner" '
                 BEGIN { RS="\0"; ORS="" }
                 {
-                    s=$0; p=index(s,"\"apps\"");
-                    if(!p){print s;exit 1}
-                    r=substr(s,p); c=index(r,":");
-                    b=index(substr(r,c),"[");
-                    st=p+c+b-1; d=0; en=st;
-                    for(i=st;i<=length(s);i++){
-                        x=substr(s,i,1);
-                        if(x=="[") d++;
-                        if(x=="]"){d--;if(d==0){en=i;break}}
+                    s=$0; p=index(s, "\"apps\"");
+                    if (!p) exit 1
+                    r=substr(s, p); c=index(r, ":");
+                    b=index(substr(r, c), "[");
+                    st=p+c+b-1; d=0; en=0;
+                    for (i=st; i<=length(s); i++) {
+                        x=substr(s, i, 1);
+                        if (x=="[") d++;
+                        if (x=="]") { d--; if (d==0) { en=i; break } }
                     }
-                    printf "%s\"apps\":[%s]%s", substr(s,1,p-1), apps, substr(s,en+1)
+                    if (!en) exit 1
+                    printf "%s\"apps\":[%s]%s", substr(s, 1, p-1), apps, substr(s, en+1)
                 }
-            ' "$TEESIM_BASE/config.json" > "$TEESIM_BASE/config.json.tmp" 2>/dev/null
-            mv -f "$TEESIM_BASE/config.json.tmp" "$TEESIM_BASE/config.json" 2>/dev/null
-            chmod 644 "$TEESIM_BASE/config.json" 2>/dev/null
-            log "已更新 config.json ($count 个包)"
-            ok "已更新 config.json ($count 个包)"
+            ' "$TEESIM_BASE/config.json" > "$TEESIM_BASE/config.json.tmp" 2>/dev/null \
+               && [ -s "$TEESIM_BASE/config.json.tmp" ]; then
+                mv -f "$TEESIM_BASE/config.json.tmp" "$TEESIM_BASE/config.json" 2>/dev/null
+                chmod 644 "$TEESIM_BASE/config.json" 2>/dev/null
+                log "已更新 config.json ($count 个包)"
+                ok "已更新 config.json ($count 个包)"
+            else
+                rm -f "$TEESIM_BASE/config.json.tmp" 2>/dev/null
+                err "config.json 更新失败（未找到 apps 字段或解析错误）"
+                log "config.json 更新失败（未找到 apps 字段或解析错误）"
+            fi
             ;;
     esac
     rm -f "$tmp"
