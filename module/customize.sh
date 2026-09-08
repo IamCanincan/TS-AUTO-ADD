@@ -5,48 +5,59 @@ ui_print "================================================"
 ui_print "   TS-AUTO-ADD 安装程序"
 ui_print "================================================"
 
-RUNDIR="/data/adb/ts_auto"
+. "$MODPATH/common.sh" 2>/dev/null || abort "无法加载 common.sh"
 
 ui_print " "
-ui_print "[1/4] 检查 inotify 支持"
-ok=0
-if command -v inotifywait >/dev/null 2>&1 || command -v inotifyd >/dev/null 2>&1; then
-    ok=1
-else
-    for bb in /data/adb/magisk/busybox /data/adb/ksu/bin/busybox /system/bin/busybox; do
-        [ -x "$bb" ] && "$bb" --list 2>/dev/null | grep -qx inotifyd && ok=1
-    done
+ui_print "[1/6] 检查 inotify 支持状态"
+INOTIFY_INFO=$(find_inotify_cmd)
+if [ -z "$INOTIFY_INFO" ]; then
+    abort "  错误: 未检测到系统提供 inotify 支持 (inotifywait/inotifyd)。"
 fi
-[ $ok -eq 0 ] && abort "  未检测到 inotify (inotifywait/inotifyd)，无法实时监听"
+INOTIFY_MODE="${INOTIFY_INFO%%:*}"
+INOTIFY_CMD="${INOTIFY_INFO#*:}"
+ui_print "  可用监控组件: ${INOTIFY_CMD%% *} ($INOTIFY_MODE)"
 
 ui_print " "
-ui_print "[2/4] 初始化运行时目录"
-mkdir -p "$RUNDIR" 2>/dev/null
-# 迁移旧版白名单（旧版寄生在 /data/adb/tricky_store）
-if [ -f /data/adb/tricky_store/taa_sys.txt ] && [ ! -f "$RUNDIR/taa_sys.txt" ]; then
-    mv -f /data/adb/tricky_store/taa_sys.txt "$RUNDIR/taa_sys.txt" 2>/dev/null
+ui_print "[2/6] 初始化工作目录"
+BASE_DIR="/data/adb/tricky_store"
+mkdir -p "$BASE_DIR" 2>/dev/null || abort "  无法创建目录 $BASE_DIR"
+
+if [ ! -f "$BASE_DIR/target.txt" ]; then
+    touch "$BASE_DIR/target.txt" 2>/dev/null
+    chmod 644 "$BASE_DIR/target.txt" 2>/dev/null
 fi
-if [ ! -f "$RUNDIR/taa_sys.txt" ]; then
-    printf 'com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n' > "$RUNDIR/taa_sys.txt" 2>/dev/null
-    chmod 640 "$RUNDIR/taa_sys.txt" 2>/dev/null
-fi
+ui_print "  工作目录设置完毕"
 
 ui_print " "
-ui_print "[3/4] 配置脚本权限"
+ui_print "[3/6] 配置脚本权限"
 set_perm_recursive "$MODPATH" 0 0 0755 0644 || true
-chmod 0755 "$MODPATH/service.sh" "$MODPATH/post-fs-data.sh" 2>/dev/null
+chmod 0755 "$MODPATH/service.sh" 2>/dev/null
+chmod 0755 "$MODPATH/action.sh" 2>/dev/null
 
 ui_print " "
-ui_print "[4/4] 生成初始应用列表"
-sh "$MODPATH/service.sh" --once 2>/dev/null && ui_print "  初始列表生成完成" || ui_print "  初始列表为空，开机后由守护进程处理"
+ui_print "[4/6] 清理旧版文件"
+rm -rf "$BASE_DIR/.ts_lock" "$BASE_DIR/.ts_debounce" "$BASE_DIR/.ts_tmp" "$BASE_DIR"/.ts_daemon*.pid "$BASE_DIR/.last_month" 2>/dev/null
+rm -f /data/adb/service.d/taa_resetprop.sh 2>/dev/null
 
-# 清理旧版寄生在 /data/adb/tricky_store 的运行时文件
-rm -rf /data/adb/tricky_store/.ts_tmp /data/adb/tricky_store/.ts_lock /data/adb/tricky_store/.ts_debounce 2>/dev/null
-rm -f /data/adb/tricky_store/.ts_daemon.pid /data/adb/tricky_store/.ts_daemon_pids.list /data/adb/tricky_store/.events.fifo 2>/dev/null
-rm -f /data/local/tmp/ts_auto.log /data/adb/ts_auto.log /data/adb/service.d/taa_resetprop.sh 2>/dev/null
+ui_print " "
+ui_print "[5/6] 运行初始列表生成"
+sync_target_list "$BASE_DIR" "$BASE_DIR/target.txt" "$BASE_DIR/.ts_tmp"
+rc=$?
+ui_print "  系统白名单项数: $TAA_SYS_COUNT"
+ui_print "  第三方应用项数: $TAA_USER_COUNT"
+case "$rc" in
+    0) ui_print "  数据写入完成。当前行数: $(wc -l < "$BASE_DIR/target.txt" 2>/dev/null || echo 0)" ;;
+    1) ui_print "  数据与现有配置一致。" ;;
+    2) ui_print "  当前结果集为空，推迟至守护进程处理" ;;
+esac
+
+ui_print " "
+ui_print "[6/6] 生成模块属性信息"
+write_security_patch "$BASE_DIR/security_patch.txt"
+if update_module_desc "$MODPATH/module.prop" "$BASE_DIR/security_patch.txt" "$TAA_SYS_COUNT" "$TAA_USER_COUNT"; then
+    ui_print "  信息更新成功"
+fi
 
 ui_print "================================================"
-ui_print "  安装完成，重启生效"
-ui_print "  手动同步: sh /data/adb/modules/ts-auto-add/service.sh --once"
-ui_print "  白名单:   $RUNDIR/taa_sys.txt"
+ui_print "  安装流程结束，需重启设备生效"
 ui_print "================================================"

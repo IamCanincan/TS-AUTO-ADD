@@ -1,8 +1,8 @@
 id=ts-auto-add
 name=TS-AUTO-ADD
-version=v1.9.86.1-yuzu
-versionCode=202607080916
+version=v1.10.0-yuzu
+versionCode=202607080917
 author=IamCanincan
-description=自动同步应用列表（白名单 taa_sys.txt + 第三方应用）至 TrickyStore target.txt 与 TeeSimulator config.json；开机注入系统属性；支持手动同步。
+description=自动同步应用列表（含白名单 taa_sys.txt）并维护安全补丁配置至 /data/adb/tricky_store；修改系统属性；省电事件驱动监听。
 updateJson=https://raw.githubusercontent.com/IamCanincan/TS-AUTO-ADD/main/update.json
 minKsuVersion=10000
