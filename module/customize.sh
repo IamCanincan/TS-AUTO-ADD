@@ -8,11 +8,9 @@ chmod 644 "$MODPATH/rules.txt" "$MODPATH/module.prop" 2>/dev/null
 # 创建手动同步命令包装器（模块 id 固定为 ts-auto-add）
 cat > /data/adb/ts-sync <<'EOF'
 #!/system/bin/sh
-for d in /data/adb/modules/ts-auto-add; do
-    [ -f "$d/action.sh" ] && exec sh "$d/action.sh" "$@"
-done
-echo "TS-AUTO-ADD 模块不存在" >&2
-exit 1
+MODDIR="/data/adb/modules/ts-auto-add"
+[ -f "$MODDIR/action.sh" ] || { echo "TS-AUTO-ADD 未安装" >&2; exit 1; }
+exec sh "$MODDIR/action.sh" "$@"
 EOF
 chmod 755 /data/adb/ts-sync
 

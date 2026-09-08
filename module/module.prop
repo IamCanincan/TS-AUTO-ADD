@@ -3,6 +3,6 @@ name=TS-AUTO-ADD
 version=v2.0.97.2-yuzu
 versionCode=202608221055
 author=IamCanincan
-description=合并系统白名单（taa_sys.txt）与第三方应用列表，生成 TrickyStore 或 TeeSimulator 的配置文件；在 post-fs-data 阶段设置系统属性；支持 action.sh 手动触发和 inotify 后台监控。
+description=合并 rules.txt 白名单与第三方应用，自动维护 TrickyStore 的 target.txt 或 TeeSimulator 的 config.json；post-fs-data 注入系统属性；开机自启 + inotify 实时同步，仅变化时写入。
 updateJson=https://raw.githubusercontent.com/IamCanincan/TS-AUTO-ADD/main/update.json
 minKsuVersion=10000
