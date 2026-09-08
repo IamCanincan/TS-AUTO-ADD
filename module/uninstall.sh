@@ -25,9 +25,9 @@ pkill -f "inotifywait.*$BASE" 2>/dev/null
 
 # 移除模块生成的运行文件和目录
 rm -rf "$BASE/.ts_lock" "$BASE/.ts_debounce" "$BASE/.ts_tmp" 2>/dev/null
-rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak" 2>/dev/null
+rm -f "$BASE/.last_month" "$BASE/security_patch.txt.bak" "$BASE/.ts_fingerprint" 2>/dev/null
 rm -f "/data/adb/ts_auto.log" "/data/local/tmp/ts_auto.log" 2>/dev/null
-rm -f "$BASE/taa_sys.txt" 2>/dev/null
+rm -f "$BASE/rules.txt" "$BASE/taa_sys.txt" 2>/dev/null
 rm -f "/data/adb/service.d/taa_resetprop.sh" 2>/dev/null
 
 exit 0

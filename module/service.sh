@@ -14,6 +14,7 @@ LOCK_DIR="${BASE}/.ts_lock"
 DEBOUNCE_LOCK="${BASE}/.ts_debounce"
 
 PIDS_FILE="${BASE}/.ts_daemon_pids.list"
+FP_FILE="${BASE}/.ts_fingerprint"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/common.sh" || exit 1
@@ -28,16 +29,30 @@ INOTIFY_MODE="${INOTIFY_INFO%%:*}"
 INOTIFY_CMD="${INOTIFY_INFO#*:}"
 log_info "初始化 inotify: ${INOTIFY_CMD%% *} (模式: $INOTIFY_MODE)"
 
+# ---------- 变更检测 ----------
+# 以 packages.list 的包名集合 + rules.txt 生成指纹，仅在真正发生
+# 安装/卸载或常驻列表变化时才执行同步，避免系统频繁改写 packages.list 造成无谓刷新。
+get_source_fingerprint() {
+    local pkgs=$(cut -d' ' -f1 "$WATCH_DIR/packages.list" 2>/dev/null | sort -u)
+    local rules=$(sed '/^$/d' "$RULES_FILE" 2>/dev/null | sort -u)
+    printf '%s\n%s\n' "$pkgs" "$rules" | cksum 2>/dev/null | cut -d' ' -f1
+}
+
 # ---------- 同步核心（应用列表 + 描述） ----------
 do_sync() {
+    local fp=$(get_source_fingerprint)
+    if [ -n "$fp" ] && [ "$fp" = "$(cat "$FP_FILE" 2>/dev/null)" ]; then
+        return 0
+    fi
+
     log_info "开始应用列表同步..."
-    sync_target_list "$BASE" "$TARGET" "$TMP"
+    run_sync "$BASE" "$TARGET" "$TMP" "$PROP_FILE"
     local rc=$?
     case "$rc" in
-        0) log_info "同步完成。系统应用: $TAA_SYS_COUNT，用户应用: $TAA_USER_COUNT" ;;
+        0) log_info "同步完成。应用总数: $TAA_COUNT" ;;
         2) log_warn "未能获取本地包名列表" ;;
     esac
-    update_module_desc "$PROP_FILE" "$TAA_SYS_COUNT" "$TAA_USER_COUNT"
+    [ -n "$fp" ] && echo "$fp" > "$FP_FILE" 2>/dev/null
 }
 
 # 防抖调度控制 (延迟: 2秒)
@@ -70,23 +85,23 @@ until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
 log_info "启动阶段检测完成，执行首次同步"
 dispatch_sync
 
-# ---------- 事件监听（合并监听系统包列表与白名单文件，单进程） ----------
+# ---------- 事件监听（合并监听系统包列表与常驻列表文件，单进程） ----------
 (
     while true; do
         [ -d "$WATCH_DIR" ] || { sleep 5; continue; }
-        ensure_taa_sys "$TAA_SYS_FILE"
+        ensure_rules_file "$RULES_FILE"
         if [ "$INOTIFY_MODE" = "inotifywait" ]; then
-            $INOTIFY_CMD -m -e modify -e create -e delete "$WATCH_DIR" "$TAA_SYS_FILE" 2>/dev/null \
+            $INOTIFY_CMD -m -e modify -e create -e delete "$WATCH_DIR" "$RULES_FILE" 2>/dev/null \
             | while read -r line; do
                 case "$line" in
-                    *packages.list*|*taa_sys.txt*) dispatch_sync ;;
+                    *packages.list*|*rules.txt*) dispatch_sync ;;
                 esac
             done
         else
-            $INOTIFY_CMD - "$WATCH_DIR:wc" "$TAA_SYS_FILE:wc" 2>/dev/null \
+            $INOTIFY_CMD - "$WATCH_DIR:wc" "$RULES_FILE:wc" 2>/dev/null \
             | while read -r _ev file; do
                 case "$file" in
-                    *packages.list*|*taa_sys.txt*) dispatch_sync ;;
+                    *packages.list*|*rules.txt*) dispatch_sync ;;
                 esac
             done
         fi

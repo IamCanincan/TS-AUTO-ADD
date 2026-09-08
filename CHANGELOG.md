@@ -9,12 +9,18 @@
 * **安全补丁功能**：完全移除对 `security_patch.txt` 的读取、生成与修改，以及月份缓存（`.last_month`）与后台联网抓取补丁的逻辑，模块不再触碰安全补丁配置。
 * **周期联网任务**：移除后台定时 ping + 拉取补丁的任务，杜绝后台网络轮询，显著降低待机功耗。
 
+#### 修复
+
+* **同步触发过于频繁**：新增源数据指纹（`packages.list` 包名集合 + `rules.txt`）变更检测，仅在真正发生应用安装/卸载或常驻列表变化时才执行同步，避免系统频繁改写 `packages.list` 造成重复同步与日志刷屏。
+
 #### 优化
 
+* **移除系统/用户区分**：`taa_sys.txt` 更名为 `rules.txt`（常驻列表，升级时自动迁移）；`target.txt` 仍为 rules.txt + 已安装第三方应用；描述与日志不再区分“系统应用/用户应用”，只显示总应用数。
 * **属性伪装提前到开机早期**：`apply_resetprop` 移至 `post-fs-data.sh`（Zygote 启动前）执行，修复 `ro.build.type`（`userdebug` → `user`）等属性在 Java `Build.TYPE` 静态字段中已固化、后设无效的问题。
-* **代码结构精简**：`common.sh` 统一提供日志、锁、白名单、应用列表同步、描述更新、inotify 探测与属性伪装函数，`action.sh` / `service.sh` / `customize.sh` / `post-fs-data.sh` 复用。
+* **代码结构精简**：`common.sh` 统一提供日志、锁、常驻列表、应用列表同步、描述更新、inotify 探测与属性伪装函数，`action.sh` / `service.sh` / `customize.sh` / `post-fs-data.sh` 复用。
 * **省电与稳定**：应用列表同步增加内容比对，仅在数据变化时落盘；两个 inotify 监听合并为单一进程，减少常驻进程数量。
 * **日志路径与权限**：日志由普通应用可读的 `/data/local/tmp/ts_auto.log` 迁移至 root 专属的 `/data/adb/ts_auto.log`，并强制 `600` 权限，降低被检测应用读取的风险。
+* **兼容范围收敛**：仅面向 Tricky Store / Tricky Store OSS（纯包名列表式 `target.txt`）。
 
 ---
 

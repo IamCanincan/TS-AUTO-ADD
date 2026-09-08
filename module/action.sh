@@ -28,32 +28,21 @@ echo "================================================"
 
 acquire_lock "$LOCK_DIR" || exit 1
 
-echo "[1/2] 正在提取应用列表..."
-sync_target_list "$BASE" "$TARGET" "$TMP"
+echo "[1/1] 正在同步应用列表..."
+run_sync "$BASE" "$TARGET" "$TMP" "$PROP_FILE"
 rc=$?
 
-echo "  系统白名单应用数: $TAA_SYS_COUNT"
-echo "  第三方用户应用数: $TAA_USER_COUNT"
-
+echo "  应用总数: $TAA_COUNT"
 case "$rc" in
-    0) echo " [✓] target.txt 同步成功，总行数: $(wc -l < "$TARGET" 2>/dev/null || echo 0)" ;;
-    1) echo " [i] 内容与现有配置一致，无需写入。" ;;
+    0) echo " [✓] target.txt 已更新，模块描述已刷新" ;;
+    1) echo " [i] 内容与现有配置一致，无需写入" ;;
     2) echo " [✗] 错误：未能获取本地包名列表" ;;
 esac
-
-echo ""
-echo "[2/2] 更新模块描述..."
-if update_module_desc "$PROP_FILE" "$TAA_SYS_COUNT" "$TAA_USER_COUNT"; then
-    echo " [✓] 模块描述已更新"
-else
-    echo " [✗] 描述更新失败"
-fi
 
 release_lock "$LOCK_DIR"
 echo "================================================"
 echo "  同步完成！"
-echo "  系统应用数: $TAA_SYS_COUNT"
-echo "  用户应用数: $TAA_USER_COUNT"
+echo "  应用总数: $TAA_COUNT"
 echo "  更新时间: $(date '+%H:%M')"
 echo "================================================"
 exit 0

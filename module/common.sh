@@ -3,7 +3,7 @@
 # 公共函数库 (事件驱动版 · 无联网)
 #=============================================================================
 
-TAA_SYS_FILE="/data/adb/tricky_store/taa_sys.txt"
+RULES_FILE="/data/adb/tricky_store/rules.txt"
 LOG_FILE="/data/adb/ts_auto.log"
 LOCK_TIMEOUT=15
 
@@ -12,6 +12,10 @@ LOCK_TIMEOUT=15
 _log() {
     local level="$1" tag="$2"; shift 2
     local msg="[$tag] $(date '+%Y-%m-%d %H:%M:%S') $*"
+    # 日志超过 256KB 时仅保留末尾 200 行，防止长期运行撑大磁盘
+    if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE" 2>/dev/null | tr -d ' ')" -gt 262144 ]; then
+        tail -n 200 "$LOG_FILE" > "${LOG_FILE}.rot" 2>/dev/null && mv -f "${LOG_FILE}.rot" "$LOG_FILE" 2>/dev/null
+    fi
     echo "$msg" >> "$LOG_FILE" 2>/dev/null
     chmod 600 "$LOG_FILE" 2>/dev/null
     logger -t TS-AUTO -p "$level" "$*" 2>/dev/null || true
@@ -41,8 +45,8 @@ release_lock() {
     rmdir "$1" 2>/dev/null || true
 }
 
-# ---------- 系统白名单 ----------
-ensure_taa_sys() {
+# ---------- rules.txt（常驻应用列表，始终并入 target.txt） ----------
+ensure_rules_file() {
     local file="$1"
     if [ ! -f "$file" ]; then
         printf "com.android.vending\ncom.google.android.gms\ncom.google.android.gsf\n" > "$file" 2>/dev/null
@@ -53,24 +57,24 @@ ensure_taa_sys() {
 }
 
 # ---------- 应用列表同步 ----------
-# 将系统白名单与第三方用户应用合并去重后写入 target.txt。
-# 计数结果写入全局变量 TAA_SYS_COUNT / TAA_USER_COUNT。
+# 将 rules.txt 常驻列表与已安装第三方应用合并去重后写入 target.txt。
+# 总数写入全局变量 TAA_COUNT。
 # 返回码：0=已写入（内容变化）；1=内容一致未写入；2=结果为空。
 sync_target_list() {
     local base="$1" target="$2" tmp="$3"
     mkdir -p "$base" 2>/dev/null
-    ensure_taa_sys "$TAA_SYS_FILE"
+    ensure_rules_file "$RULES_FILE"
 
     local apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
     local user_list=$(echo "$apps_raw" | sed -n 's/^package://p')
 
-    TAA_SYS_COUNT=$(cat "$TAA_SYS_FILE" 2>/dev/null | sed '/^$/d' | wc -l)
-    TAA_USER_COUNT=$(echo "$user_list" | sed '/^$/d' | wc -l)
+    # 两段之间补一个空行再过滤空行，避免 rules.txt 末行缺换行符时与应用拼到同一行
+    { cat "$RULES_FILE" 2>/dev/null; echo; echo "$user_list"; } | sort -u | sed '/^$/d' > "$tmp" 2>/dev/null
 
-    (cat "$TAA_SYS_FILE" 2>/dev/null; echo "$user_list") | sort -u | sed '/^$/d' > "$tmp" 2>/dev/null
-
+    TAA_COUNT=$(wc -l < "$tmp" 2>/dev/null | tr -d ' ')
     if [ ! -s "$tmp" ]; then
         rm -f "$tmp" 2>/dev/null
+        TAA_COUNT=0
         return 2
     fi
     if cmp -s "$tmp" "$target" 2>/dev/null; then
@@ -84,10 +88,10 @@ sync_target_list() {
 
 # ---------- 模块描述更新 ----------
 update_module_desc() {
-    local prop_file="$1" sys_count="$2" user_count="$3"
+    local prop_file="$1" app_count="$2"
     [ -f "$prop_file" ] || return 1
     local current_time=$(date '+%H:%M')
-    local new_desc="[系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
+    local new_desc="[应用: ${app_count} | 更新: ${current_time}]"
     local tmp_file="${prop_file}.tmp.$$"
     sed "s/^description=.*/description=$new_desc/" "$prop_file" > "$tmp_file" 2>/dev/null && {
         cat "$tmp_file" > "$prop_file"
@@ -96,6 +100,15 @@ update_module_desc() {
     }
     rm -f "$tmp_file"
     return 1
+}
+
+# ---------- 完整同步（写入 target.txt + 刷新模块描述） ----------
+# 返回码同 sync_target_list：0=已写入；1=一致未写入；2=结果为空。
+run_sync() {
+    sync_target_list "$1" "$2" "$3"
+    local rc=$?
+    update_module_desc "$4" "$TAA_COUNT"
+    return "$rc"
 }
 
 # ---------- inotify 工具定位 ----------
@@ -120,22 +133,9 @@ find_inotify_cmd() {
 }
 
 # ---------- 系统属性伪装 ----------
-check_reset_prop() {
-    local NAME="$1" EXPECTED="$2"
-    local VALUE="$(resetprop "$NAME" 2>/dev/null)"
-    if [ -z "$VALUE" ] || [ "$VALUE" != "$EXPECTED" ]; then
-        resetprop -n "$NAME" "$EXPECTED" 2>/dev/null
-    fi
-}
-contains_reset_prop() {
-    local NAME="$1" CONTAINS="$2" NEWVAL="$3"
-    local VALUE="$(resetprop "$NAME" 2>/dev/null)"
-    case "$VALUE" in
-        *"$CONTAINS"*) resetprop -n "$NAME" "$NEWVAL" 2>/dev/null ;;
-    esac
-}
 apply_resetprop() {
     command -v resetprop >/dev/null 2>&1 || return 0
+    local value="" name="" expected=""
 
     local PROPS_LIST="
 ro.boot.vbmeta.device_state locked
@@ -155,12 +155,20 @@ ro.vendor.warranty_bit 0
 vendor.boot.warranty_bit 0
 "
 
-    echo "$PROPS_LIST" | while read -r name expected; do
-        if [ -n "$name" ] && [ -n "$expected" ]; then
-            check_reset_prop "$name" "$expected"
+    # 当前值缺失或与期望值不一致时才写入
+    while read -r name expected; do
+        [ -n "$name" ] && [ -n "$expected" ] || continue
+        value="$(resetprop "$name" 2>/dev/null)"
+        if [ -z "$value" ] || [ "$value" != "$expected" ]; then
+            resetprop -n "$name" "$expected" 2>/dev/null
         fi
-    done
+    done <<EOF
+$PROPS_LIST
+EOF
 
-    contains_reset_prop "ro.bootloader" "engineering" "release"
-    contains_reset_prop "ro.build.description" "test-keys" "release-keys"
+    # 属性值含特定特征时替换
+    value="$(resetprop ro.bootloader 2>/dev/null)"
+    case "$value" in *engineering*) resetprop -n ro.bootloader release 2>/dev/null ;; esac
+    value="$(resetprop ro.build.description 2>/dev/null)"
+    case "$value" in *test-keys*) resetprop -n ro.build.description release-keys 2>/dev/null ;; esac
 }
