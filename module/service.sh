@@ -20,11 +20,13 @@ TMP="$RUNDIR/.ts_tmp"
 LOCK_DIR="$RUNDIR/.ts_lock"
 DEBOUNCE_LOCK="$RUNDIR/.ts_debounce"
 PID_FILE="$RUNDIR/.ts_daemon.pid"
-FIFO="$RUNDIR/.events.fifo"
 
 # 输出目标（仅这两个文件写入目标模块目录）
 TS_TARGET="/data/adb/tricky_store/target.txt"
 TEESIM_DIR="/data/adb/teesim"
+
+# 确保运行时目录存在（必须在写 PID / 日志 / 加锁之前）
+mkdir -p "$RUNDIR" 2>/dev/null
 
 DEBOUNCE_SEC=2
 
@@ -150,36 +152,23 @@ daemon() {
 
     until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
 
-    mkdir -p "$RUNDIR"
     lock && { sync_once; unlock; }
-
-    watcher=""
-    trap 'kill "$watcher" 2>/dev/null; rm -f "$FIFO" "$PID_FILE"; exit 0' TERM INT
-
     log "开始实时监听（$INOTIFY_MODE）"
+
+    # 监听两个目录 + 白名单文件：
+    #   /data/system    → packages.list（安装/卸载）
+    #   $RUNDIR         → taa_sys.txt 原子替换
+    #   $TAA_SYS_FILE   → taa_sys.txt 原地修改（如 echo 追加）
     while true; do
-        rm -f "$FIFO"
-        mkfifo "$FIFO" 2>/dev/null || { sleep 2; continue; }
-
-        # 监听两个目录 + 白名单文件：
-        #   /data/system    → packages.list（安装/卸载）
-        #   $RUNDIR         → taa_sys.txt 原子替换
-        #   $TAA_SYS_FILE   → taa_sys.txt 原地修改（如 echo 追加）
         if [ "$INOTIFY_MODE" = "wait" ]; then
-            $INOTIFY_CMD -m -e modify -e create -e delete -e move /data/system "$RUNDIR" "$TAA_SYS_FILE" > "$FIFO" 2>/dev/null &
+            $INOTIFY_CMD -m -e modify -e create -e delete -e move /data/system "$RUNDIR" "$TAA_SYS_FILE" 2>/dev/null | while read -r line; do
+                case "$line" in *packages.list*|*taa_sys.txt*) dispatch_sync ;; esac
+            done
         else
-            $INOTIFY_CMD - /data/system:wc "$RUNDIR:wc" "$TAA_SYS_FILE:wc" > "$FIFO" 2>/dev/null &
+            $INOTIFY_CMD - /data/system:wc "$RUNDIR:wc" "$TAA_SYS_FILE:wc" 2>/dev/null | while read -r line; do
+                case "$line" in *packages.list*|*taa_sys.txt*) dispatch_sync ;; esac
+            done
         fi
-        watcher=$!
-
-        while read -r line; do
-            case "$line" in
-                *packages.list*|*taa_sys.txt*) dispatch_sync ;;
-            esac
-        done < "$FIFO"
-
-        kill "$watcher" 2>/dev/null
-        watcher=""
         sleep 2
     done
 }
