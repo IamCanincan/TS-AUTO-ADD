@@ -2,19 +2,22 @@
 #=============================================================================
 # TS-AUTO-ADD 核心脚本（单文件）
 #   合并白名单 taa_sys.txt 与第三方应用，写入 TrickyStore 的 target.txt 和
-#   TeeSimulator 的 config.json（profiles.default.apps）。
-#   守护模式用 inotify 实时监听（事件驱动，空闲零唤醒，省电且无延迟）。
+#   TeeSimulator 的 config.json。守护进程用 inotify 实时监听。
 #
-#   用法: sh service.sh [--once|--help]
-#     无参数   守护模式：实时监听 packages.list / taa_sys.txt，变化即同步
-#     --once   手动同步一次后退出
+#   用法: sh service.sh [--once|--daemon|--help]
+#     无参数   开机入口：首次同步后后台启动守护并退出
+#     --once   手动同步一次
+#     --daemon 守护循环（由开机入口后台调用，勿手动使用）
 #=============================================================================
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 
+MODDIR="${0%/*}"
+[ "$MODDIR" = "$0" ] && MODDIR="."
+
 # 模块自身运行时目录（不寄生在 TrickyStore/TeeSimulator 目录）
 RUNDIR="/data/adb/ts_auto"
-TAA_SYS_FILE="$RUNDIR/taa_sys.txt"          # 白名单（用户可编辑）
+TAA_SYS_FILE="$RUNDIR/taa_sys.txt"
 LOG_FILE="$RUNDIR/ts_auto.log"
 TMP="$RUNDIR/.ts_tmp"
 LOCK_DIR="$RUNDIR/.ts_lock"
@@ -54,7 +57,6 @@ ensure_taa_sys() {
 }
 
 # ---------- 采集合并（白名单 + 第三方应用，去重）----------
-# 输出合并结果到 stdout，同时设置 APP_USER_COUNT / APP_SYS_COUNT。
 collect_app_list() {
     local apps_raw user_list
     ensure_taa_sys
@@ -143,16 +145,12 @@ dispatch_sync() {
     fi
 }
 
-# ---------- 守护模式（inotify 实时监听）----------
-daemon() {
+# ---------- 守护循环（后台运行）----------
+daemon_loop() {
     echo $$ > "$PID_FILE"
     log "守护进程启动 pid=$$"
 
-    find_inotify || { log "未找到 inotify，退出"; rm -f "$PID_FILE"; exit 1; }
-
-    until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
-
-    lock && { sync_once; unlock; }
+    find_inotify || { log "未找到 inotify，退出"; exit 1; }
     log "开始实时监听（$INOTIFY_MODE）"
 
     # 监听两个目录 + 白名单文件：
@@ -182,13 +180,22 @@ case "$1" in
         sync_once && echo "同步完成（系统 $APP_SYS_COUNT / 用户 $APP_USER_COUNT）" || echo "同步失败"
         unlock
         ;;
+    --daemon)
+        daemon_loop
+        ;;
     --help|-h)
         cat <<'EOF'
 用法: sh service.sh [选项]
-  无参数   守护模式（inotify 实时监听 packages.list / taa_sys.txt）
+  无参数   开机入口：首次同步 + 后台守护
   --once   手动同步一次
+  --daemon 守护循环（后台）
   --help   显示帮助
 EOF
         ;;
-    *) daemon ;;
+    *)
+        # 开机入口：等待就绪 → 首次同步 → 后台守护 → 退出（快速退出，不阻塞开机）
+        until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
+        lock && { sync_once; unlock; }
+        nohup sh "$MODDIR/service.sh" --daemon >/dev/null 2>&1 &
+        ;;
 esac
