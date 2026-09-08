@@ -13,14 +13,10 @@ TMP="${BASE}/.ts_tmp"
 LOCK_DIR="${BASE}/.ts_lock"
 DEBOUNCE_LOCK="${BASE}/.ts_debounce"
 
-PATCH_CONFIG_FILE="$BASE/security_patch.txt"
 PIDS_FILE="${BASE}/.ts_daemon_pids.list"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/common.sh" || exit 1
-
-# ---------- 系统属性伪装（先于 inotify 检查，保证无 inotify 时仍生效） ----------
-apply_resetprop
 
 # ---------- inotify 依赖检查 ----------
 INOTIFY_INFO=$(find_inotify_cmd)
@@ -32,7 +28,7 @@ INOTIFY_MODE="${INOTIFY_INFO%%:*}"
 INOTIFY_CMD="${INOTIFY_INFO#*:}"
 log_info "初始化 inotify: ${INOTIFY_CMD%% *} (模式: $INOTIFY_MODE)"
 
-# ---------- 同步核心（应用列表 + 补丁配置 + 描述） ----------
+# ---------- 同步核心（应用列表 + 描述） ----------
 do_sync() {
     log_info "开始应用列表同步..."
     sync_target_list "$BASE" "$TARGET" "$TMP"
@@ -41,8 +37,7 @@ do_sync() {
         0) log_info "同步完成。系统应用: $TAA_SYS_COUNT，用户应用: $TAA_USER_COUNT" ;;
         2) log_warn "未能获取本地包名列表" ;;
     esac
-    write_security_patch "$PATCH_CONFIG_FILE"
-    update_module_desc "$PROP_FILE" "$PATCH_CONFIG_FILE" "$TAA_SYS_COUNT" "$TAA_USER_COUNT"
+    update_module_desc "$PROP_FILE" "$TAA_SYS_COUNT" "$TAA_USER_COUNT"
 }
 
 # 防抖调度控制 (延迟: 2秒)

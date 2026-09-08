@@ -31,6 +31,7 @@ ui_print "  工作目录设置完毕"
 ui_print " "
 ui_print "[3/6] 配置脚本权限"
 set_perm_recursive "$MODPATH" 0 0 0755 0644 || true
+chmod 0755 "$MODPATH/post-fs-data.sh" 2>/dev/null
 chmod 0755 "$MODPATH/service.sh" 2>/dev/null
 chmod 0755 "$MODPATH/action.sh" 2>/dev/null
 
@@ -53,8 +54,7 @@ esac
 
 ui_print " "
 ui_print "[6/6] 生成模块属性信息"
-write_security_patch "$BASE_DIR/security_patch.txt"
-if update_module_desc "$MODPATH/module.prop" "$BASE_DIR/security_patch.txt" "$TAA_SYS_COUNT" "$TAA_USER_COUNT"; then
+if update_module_desc "$MODPATH/module.prop" "$TAA_SYS_COUNT" "$TAA_USER_COUNT"; then
     ui_print "  信息更新成功"
 fi
 

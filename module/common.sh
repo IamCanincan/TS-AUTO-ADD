@@ -52,49 +52,6 @@ ensure_taa_sys() {
     fi
 }
 
-# ---------- 日期处理 ----------
-get_system_date() {
-    local d=$(getprop ro.build.version.security_patch 2>/dev/null | grep -oE '20[2-9][0-9]-[0-9]{2}-[0-9]{2}' | head -n1)
-    [ -n "$d" ] || return
-    case "$d" in *-01) d="${d%-01}-05" ;; esac
-    echo "$d"
-}
-
-# ---------- 安全补丁配置写入（仅本地系统日期，无联网） ----------
-write_security_patch() {
-    local patch_config="$1"
-    local system_date=$(get_system_date)
-    [ -z "$system_date" ] && { log_warn "无法读取系统安全补丁日期，跳过写入"; return 1; }
-
-    {
-        echo "system=$system_date"
-        echo "boot=$system_date"
-        echo "vendor=$system_date"
-    } > "${patch_config}.tmp" 2>/dev/null || return 1
-
-    # 内容未变化时不落盘，减少无谓的磁盘写入
-    if cmp -s "${patch_config}.tmp" "$patch_config" 2>/dev/null; then
-        rm -f "${patch_config}.tmp" 2>/dev/null
-        return 0
-    fi
-
-    chmod 644 "${patch_config}.tmp" 2>/dev/null
-    mv -f "${patch_config}.tmp" "$patch_config" 2>/dev/null || return 1
-    return 0
-}
-
-# ---------- 提取补丁日期用于描述 ----------
-get_patch_details() {
-    local patch_file="$1"
-    local sys_date="未知" boot_date="未知" ven_date="未知"
-    if [ -f "$patch_file" ]; then
-        sys_date=$(grep '^system=' "$patch_file" 2>/dev/null | cut -d'=' -f2)
-        boot_date=$(grep '^boot=' "$patch_file" 2>/dev/null | cut -d'=' -f2)
-        ven_date=$(grep '^vendor=' "$patch_file" 2>/dev/null | cut -d'=' -f2)
-    fi
-    echo "system=${sys_date:-未知} boot=${boot_date:-未知} vendor=${ven_date:-未知}"
-}
-
 # ---------- 应用列表同步 ----------
 # 将系统白名单与第三方用户应用合并去重后写入 target.txt。
 # 计数结果写入全局变量 TAA_SYS_COUNT / TAA_USER_COUNT。
@@ -127,11 +84,10 @@ sync_target_list() {
 
 # ---------- 模块描述更新 ----------
 update_module_desc() {
-    local prop_file="$1" patch_config="$2" sys_count="$3" user_count="$4"
+    local prop_file="$1" sys_count="$2" user_count="$3"
     [ -f "$prop_file" ] || return 1
-    local patch_desc=$(get_patch_details "$patch_config")
     local current_time=$(date '+%H:%M')
-    local new_desc="[系统: ${sys_count} | 用户: ${user_count} | 补丁: ${patch_desc} | 更新: ${current_time}]"
+    local new_desc="[系统: ${sys_count} | 用户: ${user_count} | 更新: ${current_time}]"
     local tmp_file="${prop_file}.tmp.$$"
     sed "s/^description=.*/description=$new_desc/" "$prop_file" > "$tmp_file" 2>/dev/null && {
         cat "$tmp_file" > "$prop_file"
