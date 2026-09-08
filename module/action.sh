@@ -130,8 +130,8 @@ set_config_apps() {
             s = buf
             p = index(s, "\"apps\"")
             if (!p) exit 1
-            r = substr(s, p); c = index(r, ":"); b = index(substr(r, c), "[")
-            st = p + c + b - 1; d = 0; en = 0
+            st = p + index(substr(s, p), "[") - 1   # "apps" 数组的 "["
+            d = 0; en = 0
             for (i = st; i <= length(s); i++) {
                 x = substr(s, i, 1)
                 if (x == "[") d++
@@ -154,7 +154,6 @@ sync_once() {
         info "包列表未变化，跳过"
         return 0
     fi
-    echo "$fp" > "$CACHE" 2>/dev/null
 
     merged="$RUNDIR/merged.tmp"
     build_list "$merged" "$list"
@@ -171,6 +170,7 @@ sync_once() {
     esac
     rm -f "$merged"
     if [ $r -eq 0 ]; then
+        echo "$fp" > "$CACHE" 2>/dev/null   # 仅写入成功后更新指纹
         log "已同步 $count 个包 → $TARGET"
         ok "已同步 $count 个包"
         return 0
