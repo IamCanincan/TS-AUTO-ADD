@@ -1,4 +1,4 @@
-# TS-AUTO-ADD (v1.9.86.1-yuzu)
+# TS-AUTO-ADD (v2.0.97.2-yuzu)
 
 TS-AUTO-ADD 是一个专为 **[Tricky Store](https://github.com/5ec1cff/TrickyStore)** 设计的 Magisk 辅助模块，通过后台守护进程自动维护应用包名列表（`target.txt`）与安全补丁日期（`security_patch.txt`），并可在开机时重置关键系统属性，有效提升 Play Integrity 通过率。
 
@@ -128,7 +128,7 @@ sh /data/adb/modules/ts-auto-add/action.sh --force
 
 ---
 
-## 🔄 更新亮点（v1.9.86.1-yuzu）
+## 🔄 更新亮点（v2.0.97.2-yuzu）
 
 - **模块重构**：新增 `common.sh` 公共函数库，代码复用率提升 60%。
 - **双 inotify 模式**：自动适配 `inotifywait` / `inotifyd`，兼容性更广。
@@ -165,6 +165,6 @@ A：可删除 `/data/adb/tricky_store/.ts_daemon_pids.list` 并重启，或直�
 
 ---
 
-**版本**：v1.9.86.1-yuzu  
-**更新日期**：2026-07-08  
+**版本**：v2.0.97.2-yuzu  
+**更新日期**：2026-09-08  
 **维护者**：IamCanincan

@@ -2,6 +2,22 @@
 
 ---
 
+### v2.0.97.2-yuzu - 2026-09-08
+
+#### 移除
+
+* **安全补丁功能**：完全移除对 `security_patch.txt` 的读取、生成与修改，以及月份缓存（`.last_month`）与后台联网抓取补丁的逻辑，模块不再触碰安全补丁配置。
+* **周期联网任务**：移除后台定时 ping + 拉取补丁的任务，杜绝后台网络轮询，显著降低待机功耗。
+
+#### 优化
+
+* **属性伪装提前到开机早期**：`apply_resetprop` 移至 `post-fs-data.sh`（Zygote 启动前）执行，修复 `ro.build.type`（`userdebug` → `user`）等属性在 Java `Build.TYPE` 静态字段中已固化、后设无效的问题。
+* **代码结构精简**：`common.sh` 统一提供日志、锁、白名单、应用列表同步、描述更新、inotify 探测与属性伪装函数，`action.sh` / `service.sh` / `customize.sh` / `post-fs-data.sh` 复用。
+* **省电与稳定**：应用列表同步增加内容比对，仅在数据变化时落盘；两个 inotify 监听合并为单一进程，减少常驻进程数量。
+* **日志路径与权限**：日志由普通应用可读的 `/data/local/tmp/ts_auto.log` 迁移至 root 专属的 `/data/adb/ts_auto.log`，并强制 `600` 权限，降低被检测应用读取的风险。
+
+---
+
 ### v1.9.86.1-yuzu - 2026-07-08
 
 #### 新增
