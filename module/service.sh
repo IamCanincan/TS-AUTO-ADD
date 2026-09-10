@@ -42,14 +42,14 @@ INOTIFY_CMD="${INOTIFY_INFO#*:}"
 log_info "监听方式：$INOTIFY_MODE（${INOTIFY_CMD%% *}）"
 
 # ---------- 变更检测 ----------
-# 说明：以 packages.list 的包名集合 + rules.txt 生成指纹，用于过滤系统频繁
-#       改写 packages.list 造成的无谓同步。
+# 说明：以 packages.list 的包名集合 + rules.txt 的有效包名生成指纹，用于过滤系统
+#       频繁改写 packages.list 造成的无谓同步；只改注释或空行不会触发同步。
 # 用法：get_source_fingerprint
 get_source_fingerprint() {
     local pkgs rules
 
     pkgs=$(cut -d' ' -f1 "$WATCH_DIR/packages.list" 2>/dev/null | sort -u)
-    rules=$(sed '/^$/d' "$RULES_FILE" 2>/dev/null | sort -u)
+    rules=$(read_rules | sort -u)
 
     printf '%s\n%s\n' "$pkgs" "$rules" | cksum 2>/dev/null | cut -d' ' -f1
 }

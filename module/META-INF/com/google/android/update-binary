@@ -1,2 +1,4 @@
 #!/bin/sh
+# 说明：刷机包入口，由 Magisk / KernelSU / APatch 调用；
+#       直接把（update-binary 参数、API 版本、模块目录）转交给模块的 customize.sh
 exec sh "$3/customize.sh" "$1" "$2" "$3"

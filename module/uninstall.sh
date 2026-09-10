@@ -31,7 +31,9 @@ rm -rf "$TS/.ts_lock" "$TS/.ts_debounce" "$TS/.ts_tmp" \
 rm -f "$TS/.ts_fingerprint" "$SIM/.ts_fingerprint" 2>/dev/null
 rm -f "$TS/.last_month" "$TS/security_patch.txt.bak" 2>/dev/null
 rm -f "$TS/rules.txt" "$SIM/rules.txt" "$TS/taa_sys.txt" 2>/dev/null
-rm -f "/data/adb/ts_auto.log" "/data/local/tmp/ts_auto.log" 2>/dev/null
 rm -f "/data/adb/service.d/taa_resetprop.sh" 2>/dev/null
+
+# ---------- 清理旧版本遗留的日志文件（现版本只写系统日志） ----------
+rm -f "/data/adb/ts_auto.log" "/data/local/tmp/ts_auto.log" 2>/dev/null
 
 exit 0

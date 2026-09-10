@@ -10,6 +10,7 @@ ui_print "================================================"
 ui_print "   TS-AUTO-ADD 安装程序"
 ui_print "================================================"
 
+MODDIR="$MODPATH"          # 供 lib/common.sh 定位模块目录
 . "$MODPATH/lib/common.sh" 2>/dev/null || abort "无法加载 lib/common.sh"
 
 # ---------- [1/5] 依赖检查 ----------
