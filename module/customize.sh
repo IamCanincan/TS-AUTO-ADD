@@ -5,7 +5,7 @@ ui_print "================================================"
 ui_print "   TS-AUTO-ADD 安装程序"
 ui_print "================================================"
 
-. "$MODPATH/common.sh" 2>/dev/null || abort "无法加载 common.sh"
+. "$MODPATH/lib/common.sh" 2>/dev/null || abort "无法加载 lib/common.sh"
 
 ui_print " "
 ui_print "[1/5] 检查 inotify 支持状态"
@@ -19,7 +19,7 @@ ui_print "  可用监控组件: ${INOTIFY_CMD%% *} ($INOTIFY_MODE)"
 
 ui_print " "
 ui_print "[2/5] 探测后端并初始化工作目录"
-detect_backend
+detect_backend "$MODPATH"
 ui_print "  检测到后端: $(backend_name)"
 ui_print "  工作目录: $TAA_DIR"
 mkdir -p "$TAA_DIR" 2>/dev/null || abort "  无法创建目录 $TAA_DIR"
@@ -35,7 +35,18 @@ else
     fi
 fi
 
-migrate_rules
+# 继承旧版 taa_sys.txt 或另一后端目录中的 rules.txt
+if [ ! -f "$RULES_FILE" ]; then
+    if [ -f "$TSTORE_DIR/taa_sys.txt" ]; then
+        cp -f "$TSTORE_DIR/taa_sys.txt" "$RULES_FILE" 2>/dev/null
+    elif [ -f "$TSTORE_DIR/rules.txt" ]; then
+        cp -f "$TSTORE_DIR/rules.txt" "$RULES_FILE" 2>/dev/null
+    fi
+    if [ -f "$RULES_FILE" ]; then
+        chmod 640 "$RULES_FILE" 2>/dev/null
+        chown root:root "$RULES_FILE" 2>/dev/null
+    fi
+fi
 ui_print "  常驻列表: $RULES_FILE"
 
 ui_print " "

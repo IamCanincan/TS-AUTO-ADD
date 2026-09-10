@@ -11,7 +11,7 @@ MODDIR="${0%/*}"
 # 覆盖各框架的 resetprop 所在目录，确保能定位到 resetprop 命令
 export PATH="/system/bin:/system/xbin:/data/adb/magisk:/data/adb/ksu/bin:/data/adb/ap/bin:$PATH"
 
-. "$MODDIR/common.sh" 2>/dev/null || exit 0
+. "$MODDIR/lib/common.sh" 2>/dev/null || exit 0
 apply_resetprop
 
 exit 0

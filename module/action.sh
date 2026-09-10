@@ -7,7 +7,7 @@ MODDIR="${0%/*}"
 PROP_FILE="$MODDIR/module.prop"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
-. "$MODDIR/common.sh" || { echo " [错误] 无法加载 common.sh" >&2; exit 1; }
+. "$MODDIR/lib/common.sh" || { echo " [错误] 无法加载 lib/common.sh" >&2; exit 1; }
 
 if [ "$(id -u)" -ne 0 ]; then
     echo " [错误] 需要 root 权限" >&2
@@ -18,7 +18,7 @@ case "$1" in
     --help|-h) echo "用法: $0"; exit 0 ;;
 esac
 
-detect_backend
+detect_backend "$MODDIR"
 TMP="${TAA_DIR}/.ts_tmp"
 
 echo "================================================"

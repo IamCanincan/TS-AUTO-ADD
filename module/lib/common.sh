@@ -20,10 +20,15 @@ TAA_DIR=""
 RULES_FILE=""
 TARGET_FILE=""
 AWK_CMD=""
+TAA_PATCH=""
 
 # ---------- 后端探测 ----------
 # 存在 /data/adb/teesim/config.json 时使用 TEE Simulator，否则使用 Tricky Store
+# 用法：detect_backend <模块目录>
+# 后端实现：tricky -> backends/tricky.sh（写 target.txt）；teesim -> backends/teesim.awk（改 config.json）
 detect_backend() {
+    local mdir="$1"
+    TAA_PATCH="$mdir/backends/teesim.awk"
     if [ -f "$TEESIM_CONFIG" ]; then
         TAA_BACKEND="teesim"
         TAA_DIR="$TEESIM_DIR"
@@ -36,7 +41,13 @@ detect_backend() {
         RULES_FILE="$TSTORE_DIR/rules.txt"
         TARGET_FILE="$TSTORE_DIR/target.txt"
         AWK_CMD=""
+        if [ -f "$mdir/backends/tricky.sh" ]; then
+            . "$mdir/backends/tricky.sh"
+        else
+            log_warn "缺少后端脚本 backends/tricky.sh"
+        fi
     fi
+    return 0
 }
 
 backend_name() {
@@ -95,23 +106,6 @@ ensure_rules_file() {
     fi
 }
 
-# 从旧版 taa_sys.txt 或另一后端目录继承 rules.txt
-migrate_rules() {
-    mkdir -p "$TAA_DIR" 2>/dev/null
-    if [ ! -f "$RULES_FILE" ]; then
-        if [ -f "$TSTORE_DIR/taa_sys.txt" ]; then
-            cp -f "$TSTORE_DIR/taa_sys.txt" "$RULES_FILE" 2>/dev/null
-        elif [ -f "$TSTORE_DIR/rules.txt" ]; then
-            cp -f "$TSTORE_DIR/rules.txt" "$RULES_FILE" 2>/dev/null
-        fi
-        if [ -f "$RULES_FILE" ]; then
-            chmod 640 "$RULES_FILE" 2>/dev/null
-            chown root:root "$RULES_FILE" 2>/dev/null
-        fi
-    fi
-    return 0
-}
-
 # ---------- 生成期望应用列表 ----------
 # rules.txt 常驻列表 + 已安装第三方应用，去重排序后写入 $1；总数存入 TAA_COUNT
 build_app_list() {
@@ -128,25 +122,6 @@ build_app_list() {
     TAA_COUNT=$(wc -l < "$tmp" 2>/dev/null | tr -d ' ')
 }
 
-# ---------- Tricky Store 后端：写入 target.txt ----------
-sync_target_list() {
-    local target="$1" tmp="$2"
-    build_app_list "$tmp"
-
-    if [ ! -s "$tmp" ]; then
-        rm -f "$tmp" 2>/dev/null
-        TAA_COUNT=0
-        return 2
-    fi
-    if cmp -s "$tmp" "$target" 2>/dev/null; then
-        rm -f "$tmp" 2>/dev/null
-        return 1
-    fi
-    mv -f "$tmp" "$target" 2>/dev/null
-    chmod 644 "$target" 2>/dev/null
-    return 0
-}
-
 # ---------- 定位可用的 awk ----------
 find_awk() {
     if command -v awk >/dev/null 2>&1; then
@@ -154,26 +129,23 @@ find_awk() {
         return 0
     fi
     local b
-    for b in /data/adb/magisk/busybox /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox /data/adb/apd/busybox; do
+    for b in /data/adb/magisk/busybox /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox; do
         if [ -x "$b" ] && "$b" awk 'BEGIN{}' >/dev/null 2>&1; then
             echo "$b awk"
             return 0
         fi
     done
-    if command -v busybox >/dev/null 2>&1 && busybox awk 'BEGIN{}' >/dev/null 2>&1; then
-        echo "busybox awk"
-        return 0
-    fi
     return 1
 }
 
 # ---------- TEE Simulator 后端：仅替换 config.json 中 default profile 的 apps ----------
-# 其它字段与其它 profile 原样保留；无法可靠定位 apps 数组时返回 2，绝不写坏配置。
+# 定点替换逻辑见 backends/teesim.awk；其它字段与其它 profile 原样保留，
+# 无法可靠定位 apps 数组时返回 2，绝不写坏配置。
 sync_teesim_config() {
     local config="$1" tmp="$2"
     # awk 可能在上次探测后才可用（如后装了 busybox），这里按需重探
     [ -n "$AWK_CMD" ] || AWK_CMD=$(find_awk)
-    if [ ! -f "$config" ] || [ -z "$AWK_CMD" ]; then
+    if [ ! -f "$config" ] || [ -z "$AWK_CMD" ] || [ ! -f "$TAA_PATCH" ]; then
         TAA_COUNT=0
         return 2
     fi
@@ -187,69 +159,7 @@ sync_teesim_config() {
 
     local out="${tmp}.json" status="${tmp}.status"
     rm -f "$out" "$status" 2>/dev/null
-    $AWK_CMD -v listfile="$tmp" -v statusfile="$status" '
-function findstr(s, from, needle,   i, l) {
-    l = length(needle)
-    for (i = from; i + l - 1 <= length(s); i++)
-        if (substr(s, i, l) == needle) return i
-    return 0
-}
-function matchclose(s, openpos,   i, c, depth, instr, esc) {
-    depth = 0; instr = 0; esc = 0
-    for (i = openpos; i <= length(s); i++) {
-        c = substr(s, i, 1)
-        if (instr) {
-            if (esc) { esc = 0 } else if (c == "\\") { esc = 1 } else if (c == "\"") { instr = 0 }
-            continue
-        }
-        if (c == "\"") { instr = 1; continue }
-        if (c == "{" || c == "[") depth++
-        else if (c == "}" || c == "]") { depth--; if (depth == 0) return i }
-    }
-    return 0
-}
-BEGIN {
-    n = 0
-    while ((getline ln < listfile) > 0)
-        if (ln != "") { n++; items[n] = ln }
-    close(listfile)
-}
-{ buf = buf $0 "\n" }
-END {
-    pp = findstr(buf, 1, "\"profiles\"")
-    if (pp == 0) { print "fail" > statusfile; printf "%s", buf; exit }
-    dp = findstr(buf, pp, "\"default\"")
-    if (dp == 0) { print "fail" > statusfile; printf "%s", buf; exit }
-    ob = findstr(buf, dp + 9, "{")
-    if (ob == 0) { print "fail" > statusfile; printf "%s", buf; exit }
-    cb = matchclose(buf, ob)
-    if (cb == 0) { print "fail" > statusfile; printf "%s", buf; exit }
-    ap = findstr(buf, ob, "\"apps\"")
-    if (ap == 0 || ap > cb) { print "fail" > statusfile; printf "%s", buf; exit }
-    ab = findstr(buf, ap + 6, "[")
-    if (ab == 0 || ab > cb) { print "fail" > statusfile; printf "%s", buf; exit }
-    ae = matchclose(buf, ab)
-    if (ae == 0 || ae > cb) { print "fail" > statusfile; printf "%s", buf; exit }
-    ls = ap
-    while (ls > 1 && substr(buf, ls - 1, 1) != "\n") ls--
-    ind = ""
-    i = ls
-    while (i < ap) {
-        c = substr(buf, i, 1)
-        if (c != " " && c != "\t") break
-        ind = ind c
-        i++
-    }
-    body = ""
-    for (i = 1; i <= n; i++) {
-        body = body ind "  \"" items[i] "\""
-        if (i < n) body = body ","
-        body = body "\n"
-    }
-    printf "%s", substr(buf, 1, ab - 1) "[\n" body ind "]" substr(buf, ae + 1)
-    print "ok" > statusfile
-}
-' "$config" > "$out" 2>/dev/null
+    $AWK_CMD -v listfile="$tmp" -v statusfile="$status" -f "$TAA_PATCH" "$config" > "$out" 2>/dev/null
 
     if [ "$(cat "$status" 2>/dev/null)" != "ok" ] || [ ! -s "$out" ]; then
         rm -f "$tmp" "$out" "$status" 2>/dev/null
@@ -260,8 +170,7 @@ END {
         return 1
     fi
 
-    local mode=$(stat -c '%a' "$config" 2>/dev/null)
-    chmod "${mode:-600}" "$out" 2>/dev/null
+    chmod 600 "$out" 2>/dev/null
     chown root:root "$out" 2>/dev/null
     rm -f "$tmp" "$status" 2>/dev/null
     mv -f "$out" "$config" 2>/dev/null || return 2
@@ -288,13 +197,16 @@ update_module_desc() {
 # 用法：run_sync <module.prop 路径> <临时文件路径>
 # 返回码：0=已写入；1=内容一致未写入；2=失败或结果为空
 run_sync() {
-    local prop_file="$1" tmp="$2"
+    local prop_file="$1" tmp="$2" rc=2
     if [ "$TAA_BACKEND" = "teesim" ]; then
         sync_teesim_config "$TARGET_FILE" "$tmp"
-    else
+        rc=$?
+    elif command -v sync_target_list >/dev/null 2>&1; then
         sync_target_list "$TARGET_FILE" "$tmp"
+        rc=$?
+    else
+        TAA_COUNT=0
     fi
-    local rc=$?
     update_module_desc "$prop_file" "$TAA_COUNT"
     return "$rc"
 }

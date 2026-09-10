@@ -8,10 +8,10 @@ PROP_FILE="$MODDIR/module.prop"
 WATCH_DIR="/data/system"
 
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
-. "$MODDIR/common.sh" || exit 1
+. "$MODDIR/lib/common.sh" || exit 1
 
 # ---------- 后端探测（TEE Simulator 优先，其与 Tricky Store 互斥） ----------
-detect_backend
+detect_backend "$MODDIR"
 
 TMP="${TAA_DIR}/.ts_tmp"
 LOCK_DIR="${TAA_DIR}/.ts_lock"
