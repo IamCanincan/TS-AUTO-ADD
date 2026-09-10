@@ -1,13 +1,14 @@
 #!/system/bin/sh
-#====================================================
-# 卸载清理脚本（双后端）
-# 只删除本模块自己的文件；target.txt / config.json 属于后端，保持不动。
-#====================================================
+#=============================================================================
+# uninstall.sh - 卸载清理（框架固定调用，必须位于模块根目录）
+#
+# 说明：只删除本模块自身的文件；target.txt / config.json 属于后端，保持不动。
+#=============================================================================
 
 TS="/data/adb/tricky_store"
 SIM="/data/adb/teesim"
 
-# 停止已记录的守护进程（两个后端目录都可能存在 PID 文件）
+# ---------- 结束守护进程 ----------
 for f in "$TS/.ts_daemon_pids.list" "$SIM/.ts_daemon_pids.list"; do
     [ -f "$f" ] || continue
     while read -r pid; do
@@ -20,11 +21,11 @@ for f in "$TS/.ts_daemon_pids.list" "$SIM/.ts_daemon_pids.list"; do
     rm -f "$f" 2>/dev/null
 done
 
-# 关闭可能存在的在后台挂起的 inotify 进程（命令行含 rules.txt）
+# ---------- 结束残留的 inotify 进程（命令行含 rules.txt） ----------
 pkill -f "inotifyd.*rules.txt" 2>/dev/null
 pkill -f "inotifywait.*rules.txt" 2>/dev/null
 
-# 移除模块自身的运行文件与常驻列表
+# ---------- 删除本模块运行文件与常驻列表 ----------
 rm -rf "$TS/.ts_lock" "$TS/.ts_debounce" "$TS/.ts_tmp" \
        "$SIM/.ts_lock" "$SIM/.ts_debounce" "$SIM/.ts_tmp" 2>/dev/null
 rm -f "$TS/.ts_fingerprint" "$SIM/.ts_fingerprint" 2>/dev/null

@@ -1,9 +1,14 @@
-# TS-AUTO-ADD : replace ONLY profiles.default.apps inside TEE Simulator config.json
-# everything else (other fields, other profiles) is preserved byte for byte.
+#=============================================================================
+# backends/teesim.awk - TEE Simulator 后端定点替换
 #
-# usage: awk -v listfile=<packages, one per line> -v statusfile=<marker> -f backends/teesim.awk config.json
-# statusfile gets "ok" on success or "fail" when the apps array cannot be located.
+# 职责：只替换 config.json 中 profiles.default.apps 的内容；
+#       其余字段、其余 profile 一律按原样保留（逐字节）。
+#
+# 用法：awk -v listfile=<每行一个包名> -v statusfile=<状态文件> -f backends/teesim.awk config.json
+# 状态文件：成功写 "ok"；无法定位 apps 数组时写 "fail"（此时原样输出，不做修改）
+#=============================================================================
 
+# 说明：在字符串 s 中从 from 位置起查找 needle，返回下标（1 起），未找到返回 0
 function findstr(s, from, needle,   i, l) {
     l = length(needle)
     for (i = from; i + l - 1 <= length(s); i++)
@@ -11,7 +16,7 @@ function findstr(s, from, needle,   i, l) {
     return 0
 }
 
-# return index of the bracket closing the one at openpos (string aware)
+# 说明：返回与 openpos 处左括号配对的右括号下标，跳过字符串内的括号与转义
 function matchclose(s, openpos,   i, c, depth, instr, esc) {
     depth = 0; instr = 0; esc = 0
     for (i = openpos; i <= length(s); i++) {
@@ -27,6 +32,7 @@ function matchclose(s, openpos,   i, c, depth, instr, esc) {
     return 0
 }
 
+# 说明：读取待写入的包名列表
 BEGIN {
     n = 0
     while ((getline ln < listfile) > 0)
@@ -34,9 +40,11 @@ BEGIN {
     close(listfile)
 }
 
+# 说明：整文件读入缓冲区，便于按下标定点替换
 { buf = buf $0 "\n" }
 
 END {
+    # 定位 profiles -> default -> 该对象内的 apps 数组，任一步失败即放弃
     pp = findstr(buf, 1, "\"profiles\"")
     if (pp == 0) { print "fail" > statusfile; printf "%s", buf; exit }
     dp = findstr(buf, pp, "\"default\"")
@@ -52,7 +60,7 @@ END {
     ae = matchclose(buf, ab)
     if (ae == 0 || ae > cb) { print "fail" > statusfile; printf "%s", buf; exit }
 
-    # indentation of the "apps" line; items go two spaces deeper
+    # 取 apps 所在行的缩进，数组元素在此基础上再缩进两格
     ls = ap
     while (ls > 1 && substr(buf, ls - 1, 1) != "\n") ls--
     ind = ""
@@ -64,6 +72,7 @@ END {
         i++
     }
 
+    # 生成新数组内容（除最后一项外均补逗号）
     body = ""
     for (i = 1; i <= n; i++) {
         body = body ind "  \"" items[i] "\""
@@ -71,6 +80,7 @@ END {
         body = body "\n"
     }
 
+    # 拼接：数组左括号之前 + 新数组 + 右括号之后
     printf "%s", substr(buf, 1, ab - 1) "[\n" body ind "]" substr(buf, ae + 1)
     print "ok" > statusfile
 }
