@@ -1,7 +1,7 @@
 id=ts-auto-add
 name=TS-AUTO-ADD
-version=v2.0.97.2-yuzu
-versionCode=202609082234
+version=v2.1.08.3-yuzu
+versionCode=202609101830
 author=IamCanincan
 description=自动同步应用列表（TEE Simulator 仅改 default.apps；Tricky Store 写 target.txt）；修改系统属性；省电事件驱动监听。
 updateJson=https://raw.githubusercontent.com/IamCanincan/TS-AUTO-ADD/main/update.json

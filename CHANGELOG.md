@@ -2,6 +2,20 @@
 
 ---
 
+### v2.1.08.3-yuzu - 2026-09-10
+
+#### 新增
+
+* **TEE Simulator 后端支持**：自动探测 `/data/adb/teesim/config.json`；存在时仅替换 `profiles.default.apps`，其余字段与其它 profile 原样保留（定点替换脚本 `backends/teesim.awk`，无法定位数组时放弃写入）。TEE Simulator 与 Tricky Store 互斥，两者同时存在时优先 TEE Simulator；常驻列表随之位于 `/data/adb/teesim/rules.txt`。
+
+#### 优化
+
+* **模块结构分类**：文件分为「入口脚本（根目录）+ `lib/` 共享库 + `backends/` 后端实现」；后端实现各自独立成文件（`backends/tricky.sh` 写 `target.txt`、`backends/teesim.awk` 改 `config.json`），`lib/common.sh` 只保留通用逻辑。
+* **代码规范化**：统一中文注释与函数文档格式（说明 / 用法 / 返回码）；日志上限与锁超时提取为常量；`sync_teesim_config` 收敛为单一出口，减少重复清理语句。
+* **兼容范围**：Tricky Store / Tricky Store OSS / TEE Simulator（后两者互斥，TEE Simulator 优先）。
+
+---
+
 ### v2.0.97.2-yuzu - 2026-09-08
 
 #### 移除
