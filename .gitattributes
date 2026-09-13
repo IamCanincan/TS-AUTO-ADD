@@ -1,0 +1,17 @@
+# 换行符策略：脚本与文本文件一律使用 LF
+# 原因：shell / awk 脚本若带 CRLF，Android 上会因 shebang 末尾多出 \r 而无法执行
+#       （表现为 "/system/bin/sh^M: not found"），导致模块入口脚本失效；
+#       在 Windows 上本地打包时尤其容易踩到。
+# 自身也必须是 LF：在 Windows 上若被转成 CRLF，规则里的模式会带上 \r 而失效
+.gitattributes  text eol=lf
+
+*.sh    text eol=lf
+*.awk   text eol=lf
+*.prop  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+.gitignore  text eol=lf
+LICENSE     text eol=lf
+module/META-INF/com/google/android/update-binary  text eol=lf
+module/META-INF/com/google/android/update-script  text eol=lf
