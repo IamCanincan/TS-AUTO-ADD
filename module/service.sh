@@ -20,7 +20,7 @@ export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 # ---------- 后端互斥检查 ----------
 # 两者同时启用时不做任何处理，直接停止守护，并把停止状态写进模块描述
 if backends_conflict; then
-    log_err "$TAA_CONFLICT_MSG"
+    log_err "⛔ $TAA_CONFLICT_MSG"
     mark_module_stopped "$PROP_FILE"
     exit 0
 fi
@@ -34,20 +34,20 @@ DEBOUNCE_LOCK="${TAA_DIR}/.ts_debounce"
 PIDS_FILE="${TAA_DIR}/.ts_daemon_pids.list"
 FP_FILE="${TAA_DIR}/.ts_fingerprint"
 
-log_info "后端：$(backend_name)（目录：$TAA_DIR）"
+log_info "🔍 后端：$(backend_name)（目录：$TAA_DIR）"
 if [ "$TAA_BACKEND" = "teesim" ] && [ -z "$AWK_CMD" ]; then
-    log_warn "未找到 awk，暂时无法维护 TEE Simulator 配置"
+    log_warn "⚠️ 未找到 awk，暂时无法维护 TEE Simulator 配置"
 fi
 
 # ---------- inotify 依赖检查 ----------
 INOTIFY_INFO=$(find_inotify_cmd)
 if [ -z "$INOTIFY_INFO" ]; then
-    log_err "未找到 inotify 工具，服务退出"
+    log_err "❌ 未找到 inotify 工具，服务退出"
     exit 1
 fi
 INOTIFY_MODE="${INOTIFY_INFO%%:*}"
 INOTIFY_CMD="${INOTIFY_INFO#*:}"
-log_info "监听方式：$INOTIFY_MODE（${INOTIFY_CMD%% *}）"
+log_info "👀 监听方式：$INOTIFY_MODE（${INOTIFY_CMD%% *}）"
 
 # ---------- 变更检测 ----------
 # 说明：以 packages.list 的包名集合 + rules.txt 的有效包名生成指纹，用于过滤系统
@@ -73,12 +73,12 @@ do_sync() {
         return 0
     fi
 
-    log_info "开始应用列表同步"
+    log_info "🔄 开始应用列表同步"
     run_sync "$PROP_FILE" "$TMP"
     rc=$?
     case "$rc" in
-        0) log_info "同步完成，应用总数：$TAA_COUNT" ;;
-        2) log_warn "同步失败：未能生成或写入应用列表" ;;
+        0) log_info "✅ 同步完成，应用总数：$TAA_COUNT" ;;
+        2) log_warn "⚠️ 同步失败：未能生成或写入应用列表（已记入模块描述）" ;;
     esac
 
     if [ "$rc" != "2" ] && [ -n "$fp" ]; then
@@ -114,7 +114,7 @@ rm -rf "$TMP" "$LOCK_DIR" "$DEBOUNCE_LOCK" 2>/dev/null
 # ---------- 启动 ----------
 until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
 
-log_info "开机完成，执行首次同步"
+log_info "🚀 开机完成，执行首次同步"
 dispatch_sync
 
 # ---------- 事件监听 ----------
@@ -144,5 +144,5 @@ dispatch_sync
 ) &
 echo $! >> "$PIDS_FILE"
 
-log_info "守护进程就绪"
+log_info "✅ 守护进程就绪"
 exit 0

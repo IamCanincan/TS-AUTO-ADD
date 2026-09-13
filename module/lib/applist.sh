@@ -30,7 +30,6 @@ ensure_rules_file() {
 
 # ---------- 读取常驻列表 ----------
 # 说明：输出 rules.txt 中有效的包名：去掉行首行尾空白、忽略注释行与空行。
-#       sed 会为每行补齐换行符，因此调用方无需再处理“末行无换行”的情况。
 # 用法：read_rules
 read_rules() {
     sed 's/^[[:space:]]*//; s/[[:space:]]*$//; /^#/d; /^$/d' "$RULES_FILE" 2>/dev/null
@@ -49,8 +48,9 @@ build_app_list() {
     apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
     user_list=$(echo "$apps_raw" | sed -n 's/^package://p')
 
-    # 常驻列表与应用清单合并去重；空行来自应用清单为空的情况，直接过滤
-    { read_rules; echo "$user_list"; } | sort -u | sed '/^$/d' > "$tmp" 2>/dev/null
+    # 两段之间补一个空行：部分 sed 实现不会为「末行无换行」补行尾换行，
+    # 补空行可避免 rules.txt 末行与应用清单首行粘连；空行随后被过滤
+    { read_rules; echo; echo "$user_list"; } | sort -u | sed '/^$/d' > "$tmp" 2>/dev/null
 
     TAA_COUNT=$(wc -l < "$tmp" 2>/dev/null | tr -d ' ')
 }

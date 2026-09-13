@@ -16,7 +16,7 @@ export PATH="/system/bin:/system/xbin:/data/adb/magisk:/data/adb/ksu/bin:/data/a
 # ---------- 后端互斥检查 ----------
 # 两者同时启用时模块停止运行：不做属性伪装，并把停止状态写进模块描述
 if backends_conflict; then
-    log_warn "$TAA_CONFLICT_MSG"
+    log_warn "⛔ $TAA_CONFLICT_MSG"
     mark_module_stopped "$MODDIR/module.prop"
     exit 0
 fi

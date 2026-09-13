@@ -153,7 +153,14 @@ set_module_desc() {
 # 用法：update_module_desc <module.prop> <应用总数>
 # 返回：0=成功 1=失败
 update_module_desc() {
-    set_module_desc "$1" "[$(backend_name) | 应用: $2 | 更新: $(date '+%H:%M')]"
+    set_module_desc "$1" "✅ [$(backend_name) | 应用: $2 | 更新: $(date '+%H:%M')]"
+}
+
+# 说明：写入失败时把失败状态写进 description，避免界面仍显示成正常状态
+# 用法：mark_module_failed <module.prop>
+# 返回：0=成功 1=失败
+mark_module_failed() {
+    set_module_desc "$1" "⚠️ [$(backend_name) | 写入失败 | 更新: $(date '+%H:%M')]"
 }
 
 # 说明：因后端冲突停止运行时，把停止提示写进 description，
@@ -161,11 +168,11 @@ update_module_desc() {
 # 用法：mark_module_stopped <module.prop>
 # 返回：0=成功 1=失败
 mark_module_stopped() {
-    set_module_desc "$1" "[模块已停止 | Tricky Store 与 TEE Simulator 同时启用]"
+    set_module_desc "$1" "⛔ [模块已停止 | Tricky Store 与 TEE Simulator 同时启用]"
 }
 
 # ---------- 同步入口 ----------
-# 说明：按当前后端写入目标文件，随后刷新模块描述；两者共用同一返回码语义。
+# 说明：按当前后端写入目标文件，随后刷新模块描述；写入失败时描述标注失败状态。
 # 用法：run_sync <module.prop> <临时文件>
 # 返回：0=已写入 1=内容一致未写入 2=失败或结果为空
 run_sync() {
@@ -182,6 +189,10 @@ run_sync() {
         TAA_COUNT=0
     fi
 
-    update_module_desc "$prop_file" "$TAA_COUNT"
+    if [ "$rc" = "2" ]; then
+        mark_module_failed "$prop_file"
+    else
+        update_module_desc "$prop_file" "$TAA_COUNT"
+    fi
     return "$rc"
 }
