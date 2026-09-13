@@ -1,15 +1,26 @@
-# TS-AUTO-ADD (v2.1.08.3-yuzu)
+# TS-AUTO-ADD (v2.2.19.4-yuzu)
 
-TS-AUTO-ADD 是一个专为 **[Tricky Store](https://github.com/5ec1cff/TrickyStore)** 及其开源分支 **[Tricky Store OSS](https://github.com/beakthoven/TrickyStoreOSS)** 设计的 Magisk 辅助模块，通过后台守护进程自动维护应用包名列表（`target.txt`），并可在开机时重置关键系统属性，有效提升 Play Integrity 通过率。
+TS-AUTO-ADD 是一个面向 **[Tricky Store](https://github.com/5ec1cff/TrickyStore)** / **[Tricky Store OSS](https://github.com/beakthoven/TrickyStoreOSS)** / **TEE Simulator** 的 Magisk 辅助模块，通过后台守护进程自动维护应用包名列表，并可在开机时重置关键系统属性，有效提升 Play Integrity 通过率。
 
 > 本模块**不再修改安全补丁**（`security_patch.txt`），仅维护应用列表与系统属性。
+
+### 🔌 双后端自动探测
+
+| 后端 | 判定依据（`/data/adb/modules` 下的模块 id） | 维护目标 |
+|------|----------------------------------------------|----------|
+| **TEE Simulator** | `teesim` | `/data/adb/teesim/config.json` 的 `profiles.default.apps` |
+| **Tricky Store / OSS** | `tricky_store` | `/data/adb/tricky_store/target.txt` |
+
+TEE Simulator 模式下**只替换 `default` profile 的 `apps`**，其余字段（`keybox` / `mode` / `patchLevel` / 设备信息等）与其它 profile 一律原样保留；无法可靠定位数组时放弃写入。
+
+> ⛔ 两个模块**同时启用**时，模块直接停止运行（不做优先级选择），并把停止状态写入模块描述。
 
 ---
 
 ## ✨ 核心功能
 
 - **自动同步应用列表**  
-  合并 `rules.txt`（常驻列表）与已安装第三方应用，去重后生成 `target.txt`，供 Tricky Store / Tricky Store OSS 使用。应用安装/卸载时自动触发同步。
+  合并 `rules.txt`（常驻列表）与已安装第三方应用，去重后写入当前后端的目标文件。应用安装/卸载时自动触发同步。
 
 - **事件驱动实时监听**  
   自动探测 `inotifywait` 或 `inotifyd`，监听 `/data/system/packages.list` 及 `rules.txt` 的变更，仅在真正发生安装/卸载或常驻列表变化时执行同步。内置防抖机制与内容指纹比对，避免频繁刷新。
@@ -20,27 +31,59 @@ TS-AUTO-ADD 是一个专为 **[Tricky Store](https://github.com/5ec1cff/TrickySt
 - **统一进程管理**  
   所有后台子进程 PID 记录于 `.ts_daemon_pids.list`，卸载时可一次性全部终止，无残留。
 
-- **本地日志记录**  
-  运行日志输出至 root 专属的 `/data/adb/ts_auto.log`（`600` 权限）及系统日志（`logcat`），方便离线排查。
+- **系统日志记录**  
+  运行日志只写入系统日志（`logcat`，tag 为 `TS-AUTO`），**不落地任何文件**。查看方式：管理器里点模块的“操作”按钮（会顺带打印最近日志），或 `logcat -d -s TS-AUTO`（设备上需 root；电脑上 `adb logcat -s TS-AUTO` 不需要）。
 
 - **兼容性广泛**  
-  支持 Magisk、KernelSU、APatch，并自动适配 `inotifywait` / `inotifyd` 两种监控模式。
+  支持 Magisk、KernelSU、APatch，并自动适配 `inotifywait` / `inotifyd` 两种监控模式（含各框架自带的 busybox）。
+
+---
+
+## 🧩 模块结构
+
+```
+module/
+├─ module.prop            # 模块元数据
+├─ customize.sh           # 安装入口（框架按固定路径调用）
+├─ post-fs-data.sh        # 开机早期入口：Zygote 前属性伪装
+├─ service.sh             # 后台守护入口
+├─ action.sh              # 手动同步入口（管理器“操作”按钮）
+├─ uninstall.sh           # 卸载入口
+├─ lib/
+│  ├─ common.sh           # 函数库加载入口
+│  ├─ core.sh             # 路径常量、运行期状态、系统日志
+│  ├─ lock.sh             # 并发锁
+│  ├─ tools.sh            # 外部工具定位（awk / inotify）
+│  ├─ applist.sh          # 常驻列表与应用列表生成
+│  ├─ backend.sh          # 后端探测、后端写入、模块描述、同步入口
+│  └─ props.sh            # 系统属性伪装
+├─ backends/
+│  ├─ tricky.sh           # Tricky Store 后端实现：写 target.txt
+│  └─ teesim.awk          # TEE Simulator 后端实现：定点替换 default.apps
+└─ META-INF/              # 刷机包脚本
+```
+
+- **入口脚本必须留在根目录**：Magisk / KernelSU / APatch 按固定路径调用 `customize.sh` / `post-fs-data.sh` / `service.sh` / `uninstall.sh`，管理器“操作”按钮调用 `action.sh`。
+- `lib/` 放共享库，`backends/` 放后端实现（每个后端一个文件）；入口脚本与 `lib/common.sh` 中都不含后端专属逻辑。
 
 ---
 
 ## 📥 安装与部署
 
 ### 前置条件
-- 已安装 **[Tricky Store](https://github.com/5ec1cff/TrickyStore)** 或 **[Tricky Store OSS](https://github.com/beakthoven/TrickyStoreOSS)** 模块，且 `/data/adb/tricky_store/target.txt` 文件存在（可为空）。
-- 系统具备 `inotifywait` 或 `inotifyd` 其中之一（绝大多数 Android 系统已内置）。
+- 已安装以下**任一**后端模块：
+  - **[Tricky Store](https://github.com/5ec1cff/TrickyStore)** 或 **[Tricky Store OSS](https://github.com/beakthoven/TrickyStoreOSS)**（模块 id `tricky_store`），`/data/adb/tricky_store/target.txt` 存在（可为空）；
+  - **TEE Simulator**（模块 id `teesim`），`/data/adb/teesim/config.json` 存在。
+- 系统具备 `inotifywait` 或 `inotifyd` 其中之一（绝大多数 Android 系统已内置；Magisk / KernelSU / APatch 自带的 busybox 亦可）。
+- **两个后端不要同时启用**：同时启用时模块会停止运行，并在模块描述中提示。
 
 ### 安装步骤
 1. 在 Magisk 管理器中刷入本模块 ZIP 包。
 2. 安装脚本将自动：
    - 检测 inotify 支持，若无则中止安装。
-   - 创建工作目录及默认 `rules.txt`（含 Google 三件套）；旧版 `taa_sys.txt` 自动迁移。
-   - 生成初始 `target.txt`，合并常驻列表与当前第三方应用。
-   - 更新模块描述信息。
+   - 按模块 id 探测后端并初始化工作目录。
+   - 创建默认 `rules.txt`（含 Google 三件套与中文注释）；旧版 `taa_sys.txt` 或另一后端的 `rules.txt` 自动继承。
+   - 执行一次初始同步并更新模块描述信息。
 3. **重启设备** 以启动后台守护服务。
 
 ---
@@ -55,39 +98,70 @@ sh /data/adb/modules/ts-auto-add/action.sh
 ```
 
 ### 查看运行状态
-- **模块描述**：在 Magisk 模块详情页，`description` 字段会动态显示：
+- **模块描述**：在模块详情页，`description` 字段动态显示：
   ```
-  [应用: X | 更新: HH:MM]
+  ✅ [后端 | 应用: X | 更新: HH:MM]
   ```
-- **本地日志**：`/data/adb/ts_auto.log`
-- **系统日志**：`logcat | grep TS-AUTO`
+  写入失败时显示 `⚠️ [… 写入失败 …]`，后端冲突停止时显示 `⛔ [模块已停止 …]`。
+
+- **运行日志**：日志只写系统日志（`logcat`），tag 为 `TS-AUTO`，不落地文件。
+  最省事的方式是在管理器里点模块的“操作”按钮：`action.sh` 会同步一次并附带打印最近 15 条日志，无需自己 `su`。
+
+  以下命令供手动排查使用。
+
+  设备上（**需要 root**；在终端 App 里先 `su`，或用 `su -c '...'` 包裹）：
+
+  ```bash
+  logcat -d -s TS-AUTO | tail -n 30                    # 导出最近 30 条（推荐，看完即退出）
+  logcat -d -t 50 -s TS-AUTO                           # 只看末尾 50 条（Android 5+）
+  logcat -s TS-AUTO                                    # 实时跟随（Ctrl+C 退出）
+  logcat -c                                            # 先清空缓冲再操作，便于观察单次行为
+  logcat -d -s TS-AUTO | grep -E '后端|同步|失败|停止'   # 只看关键行
+  ```
+
+  电脑上（**不需要 root**，需已开启 USB 调试）：
+
+  ```bash
+  adb logcat -s TS-AUTO                                # 实时查看
+  adb logcat -d -s TS-AUTO > ts_auto.log               # 导出到文件再慢慢看
+  adb logcat -c && adb logcat -s TS-AUTO               # 清空后重新观察
+  ```
+
+  > 模块只在**开机**与**文件变化**（安装/卸载应用、修改 `rules.txt`）时写日志，没有事件时不会有输出，属正常现象。所以排查时建议先清空缓冲（`logcat -c`），再触发一次动作（装卸应用或点“操作”按钮），然后 `-d` 导出。
 
 ### 自定义常驻列表
-- 文件路径：`/data/adb/tricky_store/rules.txt`
-- 每行一个包名，默认包含：
+常驻列表 `rules.txt` 位于当前后端目录：
+
+| 后端 | 路径 |
+|------|------|
+| TEE Simulator | `/data/adb/teesim/rules.txt` |
+| Tricky Store / OSS | `/data/adb/tricky_store/rules.txt` |
+
+- 每行一个包名；**以 `#` 开头的行是注释，空行会被忽略**（默认内容自带说明注释）。
+- 默认包含 Google 三件套：
   ```
   com.android.vending
   com.google.android.gms
   com.google.android.gsf
   ```
-- 修改此文件后，守护进程会自动触发同步，将新增的包名合并进 `target.txt`（无需重启）。
+- 修改此文件后，守护进程会自动触发同步（无需重启）；同步前会自动补齐末行换行并清除 UTF-8 BOM。
 
 ---
 
 ## 📂 数据与配置路径
 
-运行时文件主要位于 **`/data/adb/tricky_store/`**，运行日志位于 **`/data/adb/ts_auto.log`**：
+运行时文件位于**当前后端目录**（`/data/adb/teesim/` 或 `/data/adb/tricky_store/`）：
 
 | 文件 | 说明 |
 |------|------|
-| `target.txt` | 最终输出的应用包名列表（供 Tricky Store / Tricky Store OSS 使用） |
-| `rules.txt` | 常驻应用列表（始终并入 target.txt，可手动编辑） |
+| `config.json` | TEE Simulator 配置（模块仅维护 `profiles.default.apps`） |
+| `target.txt` | Tricky Store / OSS 的应用列表（模块整体重写） |
+| `rules.txt` | 常驻应用列表（始终并入目标，可手动编辑，支持 `#` 注释） |
 | `.ts_daemon_pids.list` | 所有后台子进程 PID 列表 |
 | `.ts_fingerprint` | 源数据指纹缓存（变更检测用） |
-| `.ts_lock` | 互斥锁目录（运行时） |
-| `.ts_debounce` | 防抖锁目录（运行时） |
-| `.ts_tmp` | 临时文件（运行时） |
-| `/data/adb/ts_auto.log` | 模块运行日志 |
+| `.ts_lock` / `.ts_debounce` / `.ts_tmp` | 运行时锁与临时文件 |
+
+> 日志只写 `logcat`，不产生日志文件。
 
 ---
 
@@ -119,14 +193,18 @@ sh /data/adb/modules/ts-auto-add/action.sh
 
 ---
 
-## 🔄 更新亮点（v2.1.08.3-yuzu）
+## 🔄 更新亮点（v2.2.19.4-yuzu）
 
-- **移除安全补丁功能**：不再读取、生成或修改 `security_patch.txt`，模块只维护应用列表与系统属性。
-- **移除系统/用户区分**：`taa_sys.txt` 更名为 `rules.txt`，不再区分“系统应用/用户应用”，只显示总应用数。
-- **省电稳定**：无后台联网轮询；inotify 监听合并为单进程；内容指纹比对，仅在数据真实变化时同步。
-- **属性伪装提前**：`apply_resetprop` 移至 `post-fs-data.sh`（Zygote 前），修复 `Build.TYPE` 检测。
-- **日志安全**：日志迁移至 root 专属的 `/data/adb/ts_auto.log`（`600` 权限）。
-- **兼容范围收敛**：仅面向 Tricky Store / Tricky Store OSS。
+- **新增 TEE Simulator 后端**：按模块 id `teesim` 探测，仅替换 `config.json` 中 `profiles.default.apps`，其余字段与其它 profile 原样保留。
+- **后端冲突即停止**：Tricky Store 与 TEE Simulator 同时启用时模块停止运行，并把状态写入模块描述（`⛔`）。
+- **常驻列表支持注释**：`rules.txt` 支持 `#` 中文注释与空行；同步前自动补齐末行换行、清除 UTF-8 BOM，避免包名被污染。
+- **写入失败可见**：写入失败会标注到模块描述（`⚠️`），手动同步退出码为 `1`，不再“显示正常但其实没写进去”。
+- **监听修复**：修正 inotify 探测方式（busybox 设备不再被误判为“无 inotify 工具”）与 `inotifyd` 事件的读取方式。
+- **日志只写系统日志**：不再落地文件，查看 `logcat -d -s TS-AUTO`。
+- **省电稳定**：无后台联网轮询；单进程 inotify 监听；内容指纹比对，仅在数据真实变化时同步。
+- **属性伪装提前**：`apply_resetprop` 在 `post-fs-data.sh`（Zygote 前）执行，修复 `Build.TYPE` 检测。
+
+更早的 2.x 改动（移除安全补丁、`taa_sys.txt` 更名 `rules.txt`、日志改系统日志、模块结构分层等）见 `CHANGELOG.md` 的 `v2.0.97.2-yuzu` / `v2.1.08.3-yuzu` 条目。
 
 详细变更请参阅模块根目录下的 `CHANGELOG.md`。
 
@@ -134,14 +212,23 @@ sh /data/adb/modules/ts-auto-add/action.sh
 
 ## ❓ 常见问题
 
+**Q：怎么看模块日志？为什么 logcat 里看不到？**  
+A：日志只写 `logcat`（tag `TS-AUTO`，不落文件）。设备上读 `logcat` **需要 root**（终端里先 `su`），电脑上 `adb logcat -s TS-AUTO` 则不需要。最省事的方式是在管理器里点模块的“操作”按钮 —— `action.sh` 会附带打印最近 15 条日志。完整命令与排查步骤见上方「🛠 使用方法 → 查看运行状态」。另外模块只在**开机**与**文件变化**时写日志，没有事件时没有输出属正常现象。
+
 **Q：安装时提示“未找到 inotify 工具”？**  
-A：请确认系统是否包含 `inotifywait` 或 `inotifyd`。部分精简 ROM 可能缺失，可尝试安装 Busybox 或更换 ROM。
+A：请确认系统是否包含 `inotifywait` 或 `inotifyd`。部分精简 ROM 可能缺失，可尝试安装 Busybox 或更换 ROM（Magisk / KernelSU / APatch 自带的 busybox 会被自动识别）。
+
+**Q：模块描述显示“模块已停止”？**  
+A：说明 Tricky Store 与 TEE Simulator 同时启用。停用或卸载其中一个后重启即可恢复。
+
+**Q：模块描述显示“写入失败”？**  
+A：目标文件不可写（目录只读、文件被占用等）。检查对应后端目录的权限后重试（执行 `action.sh` 或等待下次事件触发）。
 
 **Q：`target.txt` 未按预期更新？**  
-A：检查 `/data/adb/ts_auto.log` 查看错误信息；确认 `pm` 命令可用；尝试手动执行 `action.sh` 测试。
+A：用 `logcat -d -s TS-AUTO` 查看错误信息；确认 `pm` 命令可用；尝试手动执行 `action.sh` 测试。
 
 **Q：如何临时禁用后台监听？**  
-A：可删除 `/data/adb/tricky_store/.ts_daemon_pids.list` 并重启，或直接卸载模块。
+A：可删除后端目录下的 `.ts_daemon_pids.list` 并重启，或直接卸载模块。
 
 ---
 
@@ -151,6 +238,6 @@ A：可删除 `/data/adb/tricky_store/.ts_daemon_pids.list` 并重启，或直�
 
 ---
 
-**版本**：v2.1.08.3-yuzu  
-**更新日期**：2026-09-10  
+**版本**：v2.2.19.4-yuzu  
+**更新日期**：2026-09-13  
 **维护者**：IamCanincan

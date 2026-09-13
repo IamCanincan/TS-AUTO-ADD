@@ -2,6 +2,32 @@
 
 ---
 
+### v2.2.19.4-yuzu - 2026-09-13
+
+#### 修复
+
+* **常驻列表末行无换行导致粘连**：同步前自动补齐 `rules.txt` 末行换行，避免用 `echo 包名 >> rules.txt` 追加时与上一行拼成一行；同时清除文件开头的 UTF-8 BOM（会让首个包名带上不可见前缀）。
+* **Tricky Store 写入失败被误报成功**：`target.txt` 替换失败（目录只读、文件被占用等）时如实返回失败，不再显示为正常状态。
+* **inotify 探测方式错误**：原先对 busybox 候选执行的是 `busybox --help`（不含 applet 帮助），导致仅有 busybox 的设备被误判为“无 inotify 工具”而直接退出；现改为实际执行 applet 的 `--help`。
+* **inotifyd 监听失效**：`inotifyd PROG FILE:mask` 是把 `PROG` 当程序执行，原来传 `-` 不会产生任何输出；现改用 `echo` 把事件打印给管道读取。
+
+#### 新增
+
+* **常驻列表支持注释**：`rules.txt` 支持以 `#` 开头的中文注释与空行，默认内容自带说明注释。
+* **状态写入模块描述**：写入失败显示 `⚠️ [… 写入失败 …]`，后端冲突显示 `⛔ [模块已停止 …]`，无需查日志即可在管理器界面看到原因。
+
+#### 优化
+
+* **后端判定改为按模块 id**：`/data/adb/modules/tricky_store`（Tricky Store / OSS）与 `/data/adb/modules/teesim`（TEE Simulator）；带 `disable` 标记的模块不计入。两者同时启用时模块直接停止，不再做优先级选择；残留的 teesim 配置也不再劫持后端选择。
+* **日志只写系统日志**：不再落地文件，改为三行 `logger` 调用（tag `TS-AUTO`）；查看 `logcat -d -s TS-AUTO`。
+* **界面与日志加 emoji**：安装过程、手动同步、日志与模块描述统一用 ✅ / ⚠️ / ❌ / ⛔ 标记状态，便于快速分辨。
+
+#### 兼容范围
+
+* Tricky Store / Tricky Store OSS / TEE Simulator（后两者互斥；同时启用时模块停止运行）。
+
+---
+
 ### v2.1.08.3-yuzu - 2026-09-10
 
 #### 新增

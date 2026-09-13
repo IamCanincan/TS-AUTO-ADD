@@ -11,7 +11,7 @@
 # ---------- 模块探测 ----------
 # 说明：按 /data/adb/modules 下的模块 id（目录名）判定：
 #       Tricky Store / Tricky Store OSS 的模块 id 为 tricky_store
-#       TEE Simulator v4+ 的模块 id 为 teesim
+#       TEE Simulator 的模块 id 为 teesim
 #       带 disable 标记表示被管理器停用，不计入；TEE Simulator 安装时会停用旧的
 #       Tricky Store，因此这种“已停用的残留目录”不算冲突。
 # 用法：teesim_active / tricky_active
