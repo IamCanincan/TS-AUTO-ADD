@@ -4,9 +4,13 @@
 #=============================================================================
 
 # ---------- 路径常量 ----------
-TSTORE_DIR="/data/adb/tricky_store"
-TEESIM_DIR="/data/adb/teesim"
-TEESIM_CONFIG="$TEESIM_DIR/config.json"
+TSTORE_DIR="/data/adb/tricky_store"      # Tricky Store / OSS 的数据目录
+TEESIM_DIR="/data/adb/teesim"            # TEE Simulator 的数据目录
+TEESIM_CONFIG="$TEESIM_DIR/config.json"  # TEE Simulator 配置文件
+
+TRICKY_MODULE="/data/adb/modules/tricky_store"   # Tricky Store / OSS 模块 id
+TEESIM_MODULE="/data/adb/modules/teesim"         # TEE Simulator v4+ 模块 id
+
 LOCK_TIMEOUT=15               # 锁等待上限（秒）
 
 # ---------- 运行期状态 ----------

@@ -17,6 +17,13 @@ WATCH_DIR="/data/system"
 export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/lib/common.sh" || exit 1
 
+# ---------- 后端互斥检查 ----------
+# 两者同时存在时不做任何处理，直接停止守护
+if backends_conflict; then
+    log_err "$TAA_CONFLICT_MSG"
+    exit 0
+fi
+
 # ---------- 后端探测 ----------
 detect_backend "$MODDIR"
 

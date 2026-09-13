@@ -12,6 +12,14 @@ MODDIR="${0%/*}"
 export PATH="/system/bin:/system/xbin:/data/adb/magisk:/data/adb/ksu/bin:/data/adb/ap/bin:$PATH"
 
 . "$MODDIR/lib/common.sh" 2>/dev/null || exit 0
+
+# ---------- 后端互斥检查 ----------
+# 两者同时存在时模块停止运行，不做属性伪装
+if backends_conflict; then
+    log_warn "$TAA_CONFLICT_MSG"
+    exit 0
+fi
+
 apply_resetprop
 
 exit 0

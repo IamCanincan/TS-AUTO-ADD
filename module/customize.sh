@@ -13,6 +13,12 @@ ui_print "================================================"
 MODDIR="$MODPATH"          # 供 lib/common.sh 定位模块目录
 . "$MODPATH/lib/common.sh" 2>/dev/null || abort "无法加载 lib/common.sh"
 
+# ---------- 后端互斥检查 ----------
+# 两者同时存在时直接终止安装，避免装上后模块处于停止状态
+if backends_conflict; then
+    abort "  $TAA_CONFLICT_MSG"
+fi
+
 # ---------- [1/5] 依赖检查 ----------
 ui_print " "
 ui_print "[1/5] 检查 inotify 支持"

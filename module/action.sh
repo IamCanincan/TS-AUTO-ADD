@@ -17,6 +17,13 @@ case "$1" in
     --help|-h) echo "用法：$0"; exit 0 ;;
 esac
 
+# ---------- 后端互斥检查 ----------
+# 两者同时存在时不做任何处理，直接退出
+if backends_conflict; then
+    echo " [错误] $TAA_CONFLICT_MSG" >&2
+    exit 1
+fi
+
 detect_backend "$MODDIR"
 TMP="${TAA_DIR}/.ts_tmp"
 LOCK_DIR="${TAA_DIR}/.ts_lock"

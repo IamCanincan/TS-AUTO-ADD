@@ -2,22 +2,49 @@
 #=============================================================================
 # lib/backend.sh - 后端探测、后端写入、模块描述、同步入口
 #
-# 后端（TEE Simulator 与 Tricky Store 互斥，前者优先）：
+# 后端（Tricky Store 与 TEE Simulator 互斥；两者同时启用时模块直接停止）：
 #   teesim -> /data/adb/teesim/config.json        仅替换 profiles.default.apps
 #   tricky -> /data/adb/tricky_store/target.txt   整体重写为纯包名列表
 #   写入实现分别位于 backends/teesim.awk 与 backends/tricky.sh
 #=============================================================================
 
-# ---------- 后端探测 ----------
-# 说明：存在 teesim 配置时按 TEE Simulator 处理，否则按 Tricky Store 处理；
-#       探测结果写入 core.sh 中的运行期变量，并在此加载对应后端实现。
-# 用法：detect_backend <模块目录>
-detect_backend() {
-    local mdir="$1"
+# ---------- 模块探测 ----------
+# 说明：按 /data/adb/modules 下的模块 id（目录名）判定：
+#       Tricky Store / Tricky Store OSS 的模块 id 为 tricky_store
+#       TEE Simulator v4+ 的模块 id 为 teesim
+#       带 disable 标记表示被管理器停用，不计入；TEE Simulator 安装时会停用旧的
+#       Tricky Store，因此这种“已停用的残留目录”不算冲突。
+# 用法：teesim_active / tricky_active
+# 返回：0=已安装且启用 1=未安装或已停用
+teesim_active() {
+    [ -d "$TEESIM_MODULE" ] && [ ! -f "$TEESIM_MODULE/disable" ]
+}
+
+tricky_active() {
+    [ -d "$TRICKY_MODULE" ] && [ ! -f "$TRICKY_MODULE/disable" ]
+}
+
+# ---------- 后端冲突 ----------
+# 说明：两个模块同时启用时不做任何处理，直接停止模块，不存在优先级；
+#       各入口据此中止自身流程。
+# 用法：backends_conflict
+# 返回：0=两者同时启用 1=未冲突
+backends_conflict() {
+    teesim_active && tricky_active
+}
+
+# 冲突时的统一提示文案（各入口共用）
+TAA_CONFLICT_MSG="检测到 Tricky Store 与 TEE Simulator 模块同时启用，模块停止运行（请停用或卸载其中一个）"
+
+# ---------- 后端装载 ----------
+# 说明：把运行期变量指向指定后端，并按需加载其写入实现。
+# 用法：use_backend <teesim|tricky> <模块目录>
+use_backend() {
+    local mdir="$2"
 
     TAA_PATCH="$mdir/backends/teesim.awk"
 
-    if [ -f "$TEESIM_CONFIG" ]; then
+    if [ "$1" = "teesim" ]; then
         TAA_BACKEND="teesim"
         TAA_DIR="$TEESIM_DIR"
         RULES_FILE="$TEESIM_DIR/rules.txt"
@@ -36,7 +63,22 @@ detect_backend() {
             log_warn "缺少后端脚本 backends/tricky.sh"
         fi
     fi
-    return 0
+}
+
+# ---------- 后端探测 ----------
+# 说明：优先按已启用模块判定；两者都没有时，回退到配置文件判定
+#       （兼容未装模块但已存在 teesim 配置的场景）。
+# 用法：detect_backend <模块目录>
+detect_backend() {
+    if teesim_active; then
+        use_backend teesim "$1"
+    elif tricky_active; then
+        use_backend tricky "$1"
+    elif [ -f "$TEESIM_CONFIG" ]; then
+        use_backend teesim "$1"
+    else
+        use_backend tricky "$1"
+    fi
 }
 
 # ---------- 后端名称 ----------
