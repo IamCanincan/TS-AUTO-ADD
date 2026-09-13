@@ -1,22 +1,15 @@
-# 🚀 TS-AUTO-ADD v2.2.19.4-yuzu
+# 🚀 TS-AUTO-ADD v2.2.19.5-yuzu
 
 ### 📋 核心变更摘要
 
-本次更新**以修复问题和提升稳定性为主**：修复了上一版遗留的四处缺陷（常驻列表粘连、写入失败被误报成功、inotify 探测错误、`inotifyd` 监听失效），并将**后端判定改为按模块 id 进行**、两个后端同时启用时**模块直接停止**且把原因写入模块描述。此外，日志改为 **logcat + 本地缓冲双写**（解决 `logcat` 记录很快被覆盖丢失的问题），`rules.txt` 支持 `#` 注释。
+本版新增**本地日志缓冲**（解决 `logcat` 记录一会儿就没了的问题），并完成一轮工程整理（换行符统一为 LF、CI 增加语法检查、`.gitignore` 精简、README 增加徽章与下载入口、提交历史压缩）。功能逻辑沿用 `v2.2.19.4-yuzu` 的四项修复，模块行为与现有配置无需改动。
+
+> 从 `v2.2.19.4-yuzu` 升级：只有日志缓冲是新增内容，覆盖刷入即可。
+> 从更早版本升级：会一并获得下节列出的四项修复。
 
 ---
 
-### ✨ 新增
-
-#### 🧩 TEE Simulator 后端（按模块 id 判定）
-- 判定依据改为 `/data/adb/modules` 下的模块 id：`tricky_store`（Tricky Store / OSS）与 `teesim`（TEE Simulator）；带 `disable` 标记的模块不计入。
-- TEE Simulator 模式下**只替换 `/data/adb/teesim/config.json` 的 `profiles.default.apps`**：`keybox` / `mode` / `patchLevel` / 设备信息等字段，以及**其它 profile（如 `ccc`）均逐字节保留**。
-- 定点替换由 `backends/teesim.awk` 完成，**无法可靠定位数组时放弃写入**，不会写坏配置；替换后内容与原来一致则不落盘。
-- 两个后端**同时启用时模块直接停止**（不再做优先级选择）。
-
-#### 📝 常驻列表支持注释
-- `rules.txt` 支持以 `#` 开头的注释行与空行；默认内容自带中文说明注释。
-- 同步前自动**补齐末行换行**、**清除 UTF-8 BOM**，避免包名被污染。
+### ✨ 本版新增
 
 #### 📜 本地日志缓冲
 - 除写入 `logcat`（tag 为 `TS-AUTO`）外，日志还会写入 `/data/adb/ts_auto.log`，每行带 `月-日 时:分:秒` 时间戳。
@@ -26,25 +19,12 @@
 - 缓冲文件不可写时静默退化为只写 `logcat`，不影响同步流程。
 - 管理器的“操作”按钮**优先展示缓冲内容**，安装完成时会打印日志路径；卸载时缓冲文件随模块一并删除。
 
-#### 📣 状态写入模块描述
-- 运行状态直接写进 `description`：正常 `✅ [… ]`、写入失败 `⚠️ [… 写入失败 …]`、后端冲突 `⛔ [模块已停止 …]`，不看日志也能在管理器界面看到原因。
-
 ---
 
-### 🐛 修复
+### ⚡ 本版优化
 
-- **常驻列表末行无换行导致粘连**：用 `echo 包名 >> rules.txt` 追加的包名不再与上一行粘连（同步前自动补齐末行换行）；文件开头的 UTF-8 BOM 也会被清除。
-- **写入失败被误报成功**：`target.txt` 替换失败（目录只读、文件被占用等）时如实返回失败 —— 描述标注 `⚠️`、手动同步退出码 `1`。
-- **inotify 探测方式错误**：原先探测 busybox 时执行的是 `busybox --help`（不含 applet 帮助），导致仅装有 busybox 的设备被误判为“无 inotify 工具”而直接退出；现改为实际执行 applet 的 `--help`。
-- **`inotifyd` 监听失效**：`inotifyd PROG FILE:mask` 会把 `PROG` 当作程序执行，原先传 `-` 不会产生任何输出；现改用 `echo` 打印事件，再由管道读取。
-
----
-
-### ⚡ 优化
-
-#### ➕ 日志改为双写（logcat + 本地缓冲）
-- 日志同时写入 `logcat`（tag 为 `TS-AUTO`）与 `/data/adb/ts_auto.log`（超过 64KB 时只保留末尾 200 行），不再只依赖随时可能被系统刷掉的内存日志。
-- 最省事的方式是在管理器里点模块的“操作”按钮 —— `action.sh` 会同步一次，并**附带打印最近 15 条日志**（管理器以 root 运行，无需自己 `su`）。
+#### ➕ 日志读取方式
+- 点管理器“操作”按钮即可查看：`action.sh` 会同步一次，并**附带打印最近 15 条日志**（管理器以 root 运行，无需自己 `su`），缓冲不存在时回退到 `logcat`。
 - 设备上手动查看（`/data/adb` 为 `0700`，**需要 root**；在终端 App 里先 `su`，或把命令写成 `su -c '...'`）：
 
   ```bash
@@ -62,20 +42,39 @@
   adb shell su -c 'cat /data/adb/ts_auto.log' > ts_auto_log.txt   # 导出到电脑
   ```
 
-#### 🧹 模块结构分类
+#### 🧹 工程整理
+- **换行符统一为 LF**：新增 `.gitattributes`，对 `*.sh` / `*.awk` / `*.prop` / `*.json` / `*.md` / `*.yml` 等固定 LF，避免因 CRLF 导致 Android 上 shebang 解析失败（`/system/bin/sh^M: not found`）；`LICENSE` 一并由 CRLF 转为 LF。
+- **CI 增加语法检查**：构建前对入口脚本、`lib/`、`backends/` 与 `META-INF` 内的脚本执行 `sh -n`，语法不通过的代码不进包。
+- **`.gitignore` 精简**：由 111 行压缩为 26 行，并修正原先会误忽略 `module/META-INF/` 下新增文件的规则。
+- **README**：增加 CI / Release / License 徽章与下载入口，区分正式发行版与带时间戳的 CI 测试包。
+- **提交历史压缩**：由 281 个提交（其中 236 个 merge 提交）压缩为单一提交，各历史版本仍可通过 tag（`v1.4.31.5` ~ `v2.2.19.5`）查看。
+
+#### 🧹 模块结构分类（沿用）
 - 文件分为三类：入口脚本（模块根目录）、`lib/` 共享库、`backends/` 后端实现。
 - `lib/` 按功能拆分：`core`（常量/状态/日志）、`lock`、`tools`、`applist`、`backend`、`props`，由 `common.sh` 统一加载；后端实现各自独立成文件（`backends/tricky.sh` 写 `target.txt`、`backends/teesim.awk` 改 `config.json`）。
 
-#### 📐 代码规范化
-- 统一中文注释与函数文档格式（说明 / 用法 / 返回码）；界面与日志加入 `✅` / `⚠️` / `❌` / `⛔` 状态标记，便于快速分辨。
-- 新增 `.gitattributes` 将脚本与文本文件固定为 LF，避免因 CRLF 导致 Android 上 shebang 失效（`/system/bin/sh^M: not found`）；CI 增加 `sh -n` 语法检查，语法检查不通过的代码不会被打包。
-
-#### 🕐 属性伪装仍在开机早期执行
-- `apply_resetprop` 在 `post-fs-data.sh`（Zygote 启动前）执行，在 `Build.TYPE` / `Build.TAGS` 等静态字段取值前即已生效，修复了这些字段显示为 `userdebug` 的问题。
-
-#### 🔋 省电与稳定
+#### 🔋 省电与稳定（沿用）
 - 无任何后台联网轮询；单进程同时监听 `packages.list` 与 `rules.txt`；2 秒防抖合并短时触发；通过内容指纹比对，仅在数据真实变化时同步。
 - 日志只在开机与文件变化时写入（无事件不写），缓冲裁剪也只在超限时发生，不引入常驻开销。
+
+---
+
+### 🐛 沿用的修复（`v2.2.19.4-yuzu` 引入）
+
+- **常驻列表末行无换行导致粘连**：用 `echo 包名 >> rules.txt` 追加的包名不再与上一行粘连（同步前自动补齐末行换行）；文件开头的 UTF-8 BOM 也会被清除。
+- **写入失败被误报成功**：`target.txt` 替换失败（目录只读、文件被占用等）时如实返回失败 —— 描述标注 `⚠️`、手动同步退出码 `1`。
+- **inotify 探测方式错误**：原先探测 busybox 时执行的是 `busybox --help`（不含 applet 帮助），导致仅装有 busybox 的设备被误判为“无 inotify 工具”而直接退出；现改为实际执行 applet 的 `--help`。
+- **`inotifyd` 监听失效**：`inotifyd PROG FILE:mask` 会把 `PROG` 当作程序执行，原先传 `-` 不会产生任何输出；现改用 `echo` 打印事件，再由管道读取。
+
+---
+
+### ⚙️ 运行机制（沿用，未变）
+
+- **后端判定按模块 id**：`/data/adb/modules/tricky_store`（Tricky Store / OSS）与 `/data/adb/modules/teesim`（TEE Simulator）；带 `disable` 标记的模块不计入，两个后端同时启用时模块直接停止（不做优先级选择）。
+- **TEE Simulator 只改 `profiles.default.apps`**：`keybox` / `mode` / `patchLevel` / 设备信息等字段，以及其它 profile（如 `ccc`）均逐字节保留；无法可靠定位数组时放弃写入。
+- **`rules.txt` 支持 `#` 注释与空行**，同步前自动补齐末行换行、清除 UTF-8 BOM。
+- **属性伪装在开机早期执行**：`apply_resetprop` 位于 `post-fs-data.sh`（Zygote 启动前），在 `Build.TYPE` / `Build.TAGS` 等静态字段取值前生效。
+- **事件驱动**：单进程 inotify 监听 `packages.list` 与 `rules.txt`，2 秒防抖，内容指纹比对；无联网、无定时轮询。
 
 ---
 
@@ -124,6 +123,6 @@
 
 ---
 
-> 💡 **提示**：本版以修复问题为主，建议所有用户更新；升级后无需改动任何现有配置。
+> 💡 **提示**：本版以新增日志缓冲与工程整理为主，功能行为无变化；升级后无需改动任何现有配置。
 
-**版本**：v2.2.19.4-yuzu ｜ **更新日期**：2026-09-13
+**版本**：v2.2.19.5-yuzu ｜ **更新日期**：2026-09-14

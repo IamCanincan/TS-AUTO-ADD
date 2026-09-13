@@ -1,4 +1,4 @@
-# TS-AUTO-ADD (v2.2.19.4-yuzu)
+# TS-AUTO-ADD (v2.2.19.5-yuzu)
 
 [![Build CI Module](https://github.com/IamCanincan/TS-AUTO-ADD/actions/workflows/build_ci.yml/badge.svg)](https://github.com/IamCanincan/TS-AUTO-ADD/actions/workflows/build_ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/IamCanincan/TS-AUTO-ADD?label=release&color=blue)](https://github.com/IamCanincan/TS-AUTO-ADD/releases/latest)
@@ -201,18 +201,19 @@ sh /data/adb/modules/ts-auto-add/action.sh
 
 ---
 
-## 🔄 更新亮点（v2.2.19.4-yuzu）
+## 🔄 更新亮点（v2.2.19.5-yuzu）
 
+- **日志双写 + 本地缓冲**：日志除写入 `logcat` 外，另写 `/data/adb/ts_auto.log`（带时间戳，超 64KB 只保留末尾 200 行），解决 `logcat` 环形缓冲被系统刷掉后查不到记录的问题。
+- **工程整理**：换行符统一为 LF（新增 `.gitattributes`），CI 增加 `sh -n` 语法检查，README 增加 CI / Release / License 徽章与下载入口。
 - **新增 TEE Simulator 后端**：按模块 id `teesim` 探测，仅替换 `config.json` 中 `profiles.default.apps`，其余字段与其它 profile 原样保留。
 - **后端冲突即停止**：Tricky Store 与 TEE Simulator 同时启用时模块停止运行，并把状态写入模块描述（`⛔`）。
 - **常驻列表支持注释**：`rules.txt` 支持 `#` 中文注释与空行；同步前自动补齐末行换行、清除 UTF-8 BOM，避免包名被污染。
 - **写入失败可见**：写入失败会标注到模块描述（`⚠️`），手动同步退出码为 `1`，不再“显示正常但其实没写进去”。
 - **监听修复**：修正 inotify 探测方式（busybox 设备不再被误判为“无 inotify 工具”）与 `inotifyd` 事件的读取方式。
-- **日志双写 + 本地缓冲**：日志除写入 `logcat` 外，另写 `/data/adb/ts_auto.log`（带时间戳，超 64KB 只保留末尾 200 行），解决 `logcat` 环形缓冲被系统刷掉后查不到记录的问题。
 - **省电稳定**：无后台联网轮询；单进程 inotify 监听；内容指纹比对，仅在数据真实变化时同步。
 - **属性伪装提前**：`apply_resetprop` 在 `post-fs-data.sh`（Zygote 前）执行，修复 `Build.TYPE` 检测。
 
-更早的 2.x 改动（移除安全补丁、`taa_sys.txt` 更名 `rules.txt`、日志改系统日志、模块结构分层等）见 `CHANGELOG.md` 的 `v2.0.97.2-yuzu` / `v2.1.08.3-yuzu` 条目。
+更早的改动（后端判定改为按模块 id、移除安全补丁、`taa_sys.txt` 更名 `rules.txt`、模块结构分层等）见 `CHANGELOG.md` 的 `v2.2.19.4-yuzu` / `v2.1.08.3-yuzu` / `v2.0.97.2-yuzu` 条目。
 
 详细变更请参阅模块根目录下的 `CHANGELOG.md`。
 
@@ -246,6 +247,6 @@ A：可删除后端目录下的 `.ts_daemon_pids.list` 并重启，或直接卸�
 
 ---
 
-**版本**：v2.2.19.4-yuzu  
-**更新日期**：2026-09-13  
+**版本**：v2.2.19.5-yuzu  
+**更新日期**：2026-09-14  
 **维护者**：IamCanincan
