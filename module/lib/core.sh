@@ -24,9 +24,9 @@ TAA_PATCH=""                  # TEE Simulator 定点替换脚本路径
 TAA_COUNT=0                   # 最近一次生成的应用总数
 
 # ---------- 系统日志 ----------
-# 说明：只写系统日志（logcat，tag 为 TS-AUTO），不落任何文件；
-#       时间戳由 logcat 自身记录，消息中不再重复拼时间。
-#       查看：logcat -s TS-AUTO
+# 说明：只写系统日志（logcat，tag 为 TS-AUTO），不落任何文件；时间戳由 logcat 记录。
+#       查看：logcat -d -s TS-AUTO
+#       （模块只在开机与文件变化时写日志，无事件时不会有输出，属正常现象）
 # 用法：log_info|log_warn|log_err <消息>
 log_info() { logger -t TS-AUTO -p info "$*" 2>/dev/null || true; }
 log_warn() { logger -t TS-AUTO -p warn "$*" 2>/dev/null || true; }
