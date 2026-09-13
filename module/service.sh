@@ -18,9 +18,10 @@ export PATH="/system/bin:/system/xbin:/odm/bin:/vendor/bin:/product/bin:$PATH"
 . "$MODDIR/lib/common.sh" || exit 1
 
 # ---------- 后端互斥检查 ----------
-# 两者同时存在时不做任何处理，直接停止守护
+# 两者同时启用时不做任何处理，直接停止守护，并把停止状态写进模块描述
 if backends_conflict; then
     log_err "$TAA_CONFLICT_MSG"
+    mark_module_stopped "$PROP_FILE"
     exit 0
 fi
 

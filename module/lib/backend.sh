@@ -129,18 +129,16 @@ sync_teesim_config() {
 }
 
 # ---------- 模块描述 ----------
-# 说明：把「后端 / 应用总数 / 更新时间」写回 module.prop 的 description 字段。
-# 用法：update_module_desc <module.prop> <应用总数>
+# 说明：把 description 字段替换为指定文本（写入前先落临时文件，成功才覆盖）。
+# 用法：set_module_desc <module.prop> <描述文本>
 # 返回：0=成功 1=失败
-update_module_desc() {
-    local prop_file="$1" app_count="$2"
-    local desc tmp_file
+set_module_desc() {
+    local prop_file="$1" desc="$2"
+    local tmp_file
 
     [ -f "$prop_file" ] || return 1
 
-    desc="[$(backend_name) | 应用: ${app_count} | 更新: $(date '+%H:%M')]"
     tmp_file="${prop_file}.tmp.$$"
-
     if sed "s/^description=.*/description=$desc/" "$prop_file" > "$tmp_file" 2>/dev/null; then
         cat "$tmp_file" > "$prop_file"
         rm -f "$tmp_file" 2>/dev/null
@@ -149,6 +147,21 @@ update_module_desc() {
 
     rm -f "$tmp_file" 2>/dev/null
     return 1
+}
+
+# 说明：把运行状态写回 description：后端 / 应用总数 / 更新时间
+# 用法：update_module_desc <module.prop> <应用总数>
+# 返回：0=成功 1=失败
+update_module_desc() {
+    set_module_desc "$1" "[$(backend_name) | 应用: $2 | 更新: $(date '+%H:%M')]"
+}
+
+# 说明：因后端冲突停止运行时，把停止提示写进 description，
+#       这样无需看日志，在管理器界面即可直接看到模块已停止。
+# 用法：mark_module_stopped <module.prop>
+# 返回：0=成功 1=失败
+mark_module_stopped() {
+    set_module_desc "$1" "[模块已停止 | Tricky Store 与 TEE Simulator 同时启用]"
 }
 
 # ---------- 同步入口 ----------
