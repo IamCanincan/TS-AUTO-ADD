@@ -29,23 +29,28 @@ find_awk() {
 
 # ---------- inotify 定位 ----------
 # 说明：按 inotifywait → inotifyd 的顺序探测（前者事件信息更完整，优先使用）。
+#       探测时必须实际执行「<基命令> <applet> --help」：busybox 本体不带 applet 帮助，
+#       只跑 busybox --help 会永远判定失败，导致装了 busybox 的设备反而找不到工具。
 # 用法：find_inotify_cmd
 # 返回：0=成功（输出 "模式:命令"）1=未找到
 find_inotify_cmd() {
-    local mode name
+    local mode cmd
 
     for mode in inotifywait inotifyd; do
-        for name in "$mode" "/data/adb/magisk/busybox $mode" "/data/adb/ksu/bin/busybox $mode"; do
-            command -v ${name%% *} >/dev/null 2>&1 || continue
+        for cmd in "$mode" \
+                   "/data/adb/magisk/busybox $mode" \
+                   "/data/adb/ksu/bin/busybox $mode" \
+                   "/data/adb/ap/bin/busybox $mode"; do
+            command -v ${cmd%% *} >/dev/null 2>&1 || continue
 
-            # 用 --help 输出确认该 applet 具备对应能力
+            # $cmd 故意不加引号：需按空格拆成「基命令 + applet」再执行
             if [ "$mode" = "inotifywait" ]; then
-                ${name%% *} --help 2>&1 | grep -q -e '-m' -e '--monitor' || continue
+                $cmd --help 2>&1 | grep -q -- '--monitor' || continue
             else
-                ${name%% *} --help 2>&1 | grep -q 'inotifyd' || continue
+                $cmd --help 2>&1 | grep -q 'inotifyd' || continue
             fi
 
-            echo "$mode:$name"
+            echo "$mode:$cmd"
             return 0
         done
     done

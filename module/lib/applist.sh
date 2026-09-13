@@ -28,6 +28,36 @@ ensure_rules_file() {
     chcon system_data_file "$file" 2>/dev/null || true
 }
 
+# ---------- 规则文件规范化 ----------
+# 说明：修正两类会污染包名的写法问题（尽力而为，失败不影响后续流程）：
+#       1) 末行缺少换行符——否则用户再用「echo 包名 >> rules.txt」追加时，
+#          新包名会与最后一行粘成一行；
+#       2) 文件开头带 UTF-8 BOM——会让第一个包名带上不可见前缀。
+# 用法：normalize_rules_file <rules.txt 路径>
+normalize_rules_file() {
+    local file="$1"
+
+    [ -f "$file" ] || return 0
+
+    # 末行换行：tail -c1 取最后一个字节，取不到内容说明已以换行结尾
+    if [ -n "$(tail -c 1 "$file" 2>/dev/null)" ]; then
+        echo >> "$file" 2>/dev/null
+    fi
+
+    # UTF-8 BOM：与 BOM 三字节直接比较，命中则从第 4 字节起重写文件
+    if [ "$(head -c 3 "$file" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
+        if tail -c +4 "$file" > "${file}.bom" 2>/dev/null; then
+            chmod 640 "${file}.bom" 2>/dev/null
+            chown root:root "${file}.bom" 2>/dev/null
+            chcon system_data_file "${file}.bom" 2>/dev/null || true
+            mv -f "${file}.bom" "$file" 2>/dev/null
+        fi
+        rm -f "${file}.bom" 2>/dev/null
+    fi
+
+    return 0
+}
+
 # ---------- 读取常驻列表 ----------
 # 说明：输出 rules.txt 中有效的包名：去掉行首行尾空白、忽略注释行与空行。
 # 用法：read_rules
@@ -44,6 +74,7 @@ build_app_list() {
 
     mkdir -p "$TAA_DIR" 2>/dev/null
     ensure_rules_file "$RULES_FILE"
+    normalize_rules_file "$RULES_FILE"
 
     apps_raw=$(cmd package list packages -3 -u --user all 2>/dev/null || pm list packages -3 2>/dev/null)
     user_list=$(echo "$apps_raw" | sed -n 's/^package://p')

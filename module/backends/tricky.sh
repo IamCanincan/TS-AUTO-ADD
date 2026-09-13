@@ -9,7 +9,7 @@
 # 说明：列表有变化时原子替换 target.txt；内容一致则不落盘。
 # 用法：sync_target_list <target.txt> <临时文件>
 # 依赖：build_app_list（lib/common.sh）生成列表并设置 TAA_COUNT
-# 返回：0=已写入 1=内容一致未写入 2=结果为空
+# 返回：0=已写入 1=内容一致未写入 2=结果为空或写入失败
 sync_target_list() {
     local target="$1"
     local tmp="$2"
@@ -26,7 +26,12 @@ sync_target_list() {
         return 1
     fi
 
-    mv -f "$tmp" "$target" 2>/dev/null
-    chmod 644 "$target" 2>/dev/null
-    return 0
+    # 原子替换：目录只读、文件被占用等情况下如实返回失败，避免误报成功
+    if mv -f "$tmp" "$target" 2>/dev/null; then
+        chmod 644 "$target" 2>/dev/null
+        return 0
+    fi
+
+    rm -f "$tmp" 2>/dev/null
+    return 2
 }

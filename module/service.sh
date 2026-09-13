@@ -132,9 +132,12 @@ dispatch_sync
                     esac
                 done
         else
-            $INOTIFY_CMD - "$WATCH_DIR:wc" "$RULES_FILE:wc" 2>/dev/null |
-                while read -r _ev file; do
-                    case "$file" in
+            # busybox/toybox 的 inotifyd 把 PROG 当程序执行，事件作为参数传入；
+            # 这里用 echo 把「事件 + 路径」打到 stdout，再由本管道读取并匹配。
+            # （旧写法传 "-" 不会产生任何输出，等于监听失效）
+            $INOTIFY_CMD echo "$WATCH_DIR:wc" "$RULES_FILE:wc" 2>/dev/null |
+                while read -r line; do
+                    case "$line" in
                         *packages.list*|*rules.txt*) dispatch_sync ;;
                     esac
                 done
